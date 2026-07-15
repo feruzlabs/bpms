@@ -31,10 +31,10 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
     @Override
     public DefinitionRecord save(DefinitionRecord d) {
         jdbc.update("""
-                insert into process_definition(id,process_key,name,version,source_format,bpmn_xml,parsed_json,created_at)
-                values(?,?,?,?,?,?,cast(? as jsonb),?)
+                insert into process_definition(id,process_key,name,version,source_format,bpmn_xml,created_at)
+                values(?,?,?,?,?,?,?)
                 """,
-                d.id(), d.key(), d.name(), d.version(), d.sourceFormat(), d.bpmnXml(), d.parsedJson(),
+                d.id(), d.key(), d.name(), d.version(), d.sourceFormat(), d.bpmnXml(),
                 Timestamp.from(d.createdAt()));
         return d;
     }
@@ -52,11 +52,9 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
     @Override
     public List<DefinitionRecord> findAll() {
         return jdbc.query("""
-                select id,process_key,name,version,source_format,bpmn_xml,parsed_json::text,created_at
+                select id,process_key,name,version,source_format,bpmn_xml,created_at
                 from process_definition order by process_key,version
-                """, (r, n) -> new DefinitionRecord(
-                r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getString(5),
-                r.getString(6), r.getString(7), r.getTimestamp(8).toInstant()));
+                """, (r, n) -> mapDefinition(r));
     }
 
     @Override
@@ -69,12 +67,16 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
 
     private Optional<DefinitionRecord> oneDefinition(String suffix, Object arg) {
         return jdbc.query("""
-                select id,process_key,name,version,source_format,bpmn_xml,parsed_json::text,created_at
+                select id,process_key,name,version,source_format,bpmn_xml,created_at
                 from process_definition
-                """ + suffix, (r, n) -> new DefinitionRecord(
-                r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getString(5),
-                r.getString(6), r.getString(7), r.getTimestamp(8).toInstant()), arg)
+                """ + suffix, (r, n) -> mapDefinition(r), arg)
                 .stream().findFirst();
+    }
+
+    private static DefinitionRecord mapDefinition(java.sql.ResultSet r) throws java.sql.SQLException {
+        return new DefinitionRecord(
+                r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getString(5),
+                r.getString(6), r.getTimestamp(7).toInstant());
     }
 
     @Override
@@ -135,7 +137,16 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
     public void putAll(String id, Map<String, Object> values) {
         values.forEach((k, v) -> {
             try {
-                String type = type(v);
+                if (v == null) {
+                    jdbc.update("""
+                            insert into token_variable(instance_id,name,type,value_text,value_json)
+                            values(?,?,?,?,cast(? as jsonb))
+                            on conflict(instance_id,name) do update
+                            set type=excluded.type, value_text=excluded.value_text, value_json=excluded.value_json
+                            """, id, k, "string", null, null);
+                    return;
+                }
+                String type = typeOf(v);
                 String text = "json".equals(type) ? null : String.valueOf(v);
                 String valueJson = "json".equals(type) ? json.writeValueAsString(v) : null;
                 jdbc.update("""
@@ -154,15 +165,8 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
     public Map<String, Object> getAll(String id) {
         Map<String, Object> result = new HashMap<>();
         jdbc.query("select name,type,value_text,value_json::text from token_variable where instance_id=?", rs -> {
-            String t = rs.getString(2);
-            String value = rs.getString(3);
             try {
-                result.put(rs.getString(1), switch (t) {
-                    case "long" -> Long.valueOf(value);
-                    case "boolean" -> Boolean.valueOf(value);
-                    case "json" -> json.readValue(rs.getString(4), new TypeReference<>() {});
-                    default -> value;
-                });
+                result.put(rs.getString(1), decode(rs.getString(2), rs.getString(3), rs.getString(4), json));
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
@@ -216,7 +220,16 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
                 .stream().findFirst();
     }
 
-    private String type(Object o) {
+    /**
+     * Canonical EAV type map (plan 16). Fractional numbers must NOT be stored as {@code long}.
+     */
+    static String typeOf(Object o) {
+        if (o == null) {
+            return "string";
+        }
+        if (o instanceof Double || o instanceof Float || o instanceof java.math.BigDecimal) {
+            return "double";
+        }
         if (o instanceof Number) {
             return "long";
         }
@@ -227,5 +240,20 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
             return "date";
         }
         return o instanceof String ? "string" : "json";
+    }
+
+    /** Inverse of {@link #typeOf(Object)} for token_variable rows. Never throws NumberFormatException on decimals. */
+    static Object decode(String type, String valueText, String valueJson, ObjectMapper mapper) throws Exception {
+        if (type == null) {
+            return valueText;
+        }
+        return switch (type) {
+            case "long" -> valueText == null ? null : Long.valueOf(valueText);
+            case "double" -> valueText == null ? null : new java.math.BigDecimal(valueText);
+            case "boolean" -> valueText == null ? null : Boolean.valueOf(valueText);
+            case "json" -> valueJson == null ? null : mapper.readValue(valueJson, new TypeReference<>() {});
+            case "date", "string" -> valueText;
+            default -> valueText;
+        };
     }
 }

@@ -44,24 +44,7 @@ class ExclusiveGatewayEngineTest {
 
     @Test
     void takesConditionBranchWhenHeuristicMatches() {
-        ProcessDefinition definition = new ProcessDefinition(
-                "demo", "demo", "demo",
-                List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
-                        new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
-                        new ExclusiveGatewayNode("gw", null, "toLow", Optional.empty(), List.of()),
-                        new EndEventNode("end_ok", null, Optional.empty(), Optional.empty(), List.of()),
-                        new EndEventNode("end_low", null, Optional.empty(), Optional.empty(), List.of())
-                ),
-                List.of(
-                        new SequenceFlow("f1", null, "start", "noop", Optional.empty()),
-                        new SequenceFlow("f2", null, "noop", "gw", Optional.empty()),
-                        new SequenceFlow("toOk", null, "gw", "end_ok",
-                                Optional.of(new ConditionExpr("amount.intValue() > 100"))),
-                        new SequenceFlow("toLow", null, "gw", "end_low", Optional.empty())
-                ),
-                List.of(), List.of(), Map.of()
-        );
+        ProcessDefinition definition = linearGatewayProcess("amount.intValue() > 100");
 
         InMemoryPorts ports = new InMemoryPorts();
         ports.variables.put("amount", 150L);
@@ -77,23 +60,25 @@ class ExclusiveGatewayEngineTest {
     }
 
     @Test
+    void gatewayAcceptsDecimalAmountAsBigDecimal() {
+        ProcessDefinition definition = linearGatewayProcess("amount.doubleValue() > 100");
+
+        InMemoryPorts ports = new InMemoryPorts();
+        ports.variables.put("amount", new java.math.BigDecimal("150.50"));
+        ExecutionEngine engine = newEngine(ports, false);
+        TokenRecord token = new TokenRecord("t1", "i1", "start", TokenStatus.ACTIVE, null);
+        ports.tokens.put(token.id(), token);
+        ports.instances.put("i1", new InstanceRecord("i1", "d1", "bk", InstanceStatus.RUNNING, Instant.now(), null));
+
+        engine.run(definition, token, "bk");
+
+        assertTrue(ports.tokens.values().stream()
+                .anyMatch(t -> "end_ok".equals(t.currentNodeId()) && t.status() == TokenStatus.COMPLETED));
+    }
+
+    @Test
     void fallsBackToDefaultFlow() {
-        ProcessDefinition definition = new ProcessDefinition(
-                "demo", "demo", "demo",
-                List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
-                        new ExclusiveGatewayNode("gw", null, "toLow", Optional.empty(), List.of()),
-                        new EndEventNode("end_ok", null, Optional.empty(), Optional.empty(), List.of()),
-                        new EndEventNode("end_low", null, Optional.empty(), Optional.empty(), List.of())
-                ),
-                List.of(
-                        new SequenceFlow("f1", null, "start", "gw", Optional.empty()),
-                        new SequenceFlow("toOk", null, "gw", "end_ok",
-                                Optional.of(new ConditionExpr("amount.intValue() > 100"))),
-                        new SequenceFlow("toLow", null, "gw", "end_low", Optional.empty())
-                ),
-                List.of(), List.of(), Map.of()
-        );
+        ProcessDefinition definition = linearGatewayProcess("amount.intValue() > 100");
 
         InMemoryPorts ports = new InMemoryPorts();
         ports.variables.put("amount", 10L);
@@ -105,6 +90,27 @@ class ExclusiveGatewayEngineTest {
         engine.run(definition, token, "bk");
 
         assertTrue(ports.tokens.values().stream().anyMatch(t -> "end_low".equals(t.currentNodeId())));
+    }
+
+    private static ProcessDefinition linearGatewayProcess(String condition) {
+        return new ProcessDefinition(
+                "demo", "demo", "demo",
+                List.of(
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
+                        new ExclusiveGatewayNode("gw", null, "toLow", Optional.empty(), List.of()),
+                        new EndEventNode("end_ok", null, Optional.empty(), Optional.empty(), List.of()),
+                        new EndEventNode("end_low", null, Optional.empty(), Optional.empty(), List.of())
+                ),
+                List.of(
+                        new SequenceFlow("f1", null, "start", "noop", Optional.empty()),
+                        new SequenceFlow("f2", null, "noop", "gw", Optional.empty()),
+                        new SequenceFlow("toOk", null, "gw", "end_ok",
+                                Optional.of(new ConditionExpr(condition))),
+                        new SequenceFlow("toLow", null, "gw", "end_low", Optional.empty())
+                ),
+                List.of(), List.of(), Map.of()
+        );
     }
 
     private static ExecutionEngine newEngine(InMemoryPorts ports, boolean async) {

@@ -18,6 +18,7 @@ import com.bpms.spi.engine.RuntimeModels.TokenView;
 import com.bpms.spi.engine.RuntimeModels.UserTaskRecord;
 import com.bpms.spi.parse.ProcessDefinitionParser;
 import com.bpms.spi.port.ClockPort;
+import com.bpms.spi.port.DefinitionRegistry;
 import com.bpms.spi.port.DefinitionRepositoryPort;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.TaskRepositoryPort;
@@ -26,6 +27,7 @@ import com.bpms.spi.port.VariableStorePort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
@@ -35,6 +37,7 @@ import java.util.UUID;
 public class ProcessEngineService implements ProcessEnginePort {
 
     private final ProcessDefinitionParser parser;
+    private final DefinitionRegistry registry;
     private final DefinitionRepositoryPort definitions;
     private final InstanceRepositoryPort instances;
     private final TokenRepositoryPort tokens;
@@ -45,6 +48,7 @@ public class ProcessEngineService implements ProcessEnginePort {
 
     public ProcessEngineService(
             ProcessDefinitionParser parser,
+            DefinitionRegistry registry,
             DefinitionRepositoryPort definitions,
             InstanceRepositoryPort instances,
             TokenRepositoryPort tokens,
@@ -54,6 +58,7 @@ public class ProcessEngineService implements ProcessEnginePort {
             ClockPort clock
     ) {
         this.parser = parser;
+        this.registry = registry;
         this.definitions = definitions;
         this.instances = instances;
         this.tokens = tokens;
@@ -72,10 +77,10 @@ public class ProcessEngineService implements ProcessEnginePort {
         ProcessDefinition d = parsed.definition();
         String id = UUID.randomUUID().toString();
         int version = definitions.nextVersion(d.processId());
-        // Re-parse at runtime from XML; stash empty JSON stub (avoids sealed-type Jackson graph).
         definitions.save(new DefinitionRecord(
                 id, d.processId(), d.name(), version, "CAMUNDA",
-                new String(bytes), "{}", clock.now()));
+                new String(bytes, StandardCharsets.UTF_8), clock.now()));
+        registry.warm(id, d);
         return new DeployResult(id, d.processId(), version);
     }
 
@@ -84,7 +89,7 @@ public class ProcessEngineService implements ProcessEnginePort {
         DefinitionRecord d = definitions.findDefinitionById(ref)
                 .or(() -> definitions.findLatestByKey(ref))
                 .orElseThrow(() -> new NoSuchElementException("Definition not found: " + ref));
-        ProcessDefinition model = parser.parse(d.bpmnXml().getBytes()).definition();
+        ProcessDefinition model = registry.get(d.id());
         String iid = UUID.randomUUID().toString();
         instances.save(new InstanceRecord(iid, d.id(), businessKey, InstanceStatus.RUNNING, clock.now(), null));
         variables.putAll(iid, input == null ? Map.of() : input);
@@ -123,8 +128,7 @@ public class ProcessEngineService implements ProcessEnginePort {
                 task.id(), task.instanceId(), task.tokenId(), task.nodeId(), task.name(),
                 true, task.createdAt(), clock.now()));
         InstanceRecord instance = instances.findInstanceById(task.instanceId()).orElseThrow();
-        DefinitionRecord d = definitions.findDefinitionById(instance.definitionId()).orElseThrow();
-        ProcessDefinition model = parser.parse(d.bpmnXml().getBytes()).definition();
+        ProcessDefinition model = registry.get(instance.definitionId());
         TokenRecord waiting = tokens.findTokenById(task.tokenId()).orElseThrow();
         FlowNode node = model.node(waiting.currentNodeId()).orElseThrow();
         SequenceFlow next = model.outgoing(node.id()).stream().findFirst()

@@ -1,5 +1,6 @@
 package com.bpms.server.config;
 
+import com.bpms.engine.CachingDefinitionRegistry;
 import com.bpms.engine.ConnectorRegistry;
 import com.bpms.engine.ExecutionEngine;
 import com.bpms.expression.SpelExpressionEvaluator;
@@ -8,6 +9,8 @@ import com.bpms.spi.connector.ConnectorProvider;
 import com.bpms.spi.expression.ExpressionEvaluator;
 import com.bpms.spi.parse.ProcessDefinitionParser;
 import com.bpms.spi.port.ClockPort;
+import com.bpms.spi.port.DefinitionRegistry;
+import com.bpms.spi.port.DefinitionRepositoryPort;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
@@ -20,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -44,6 +48,16 @@ public class EngineConfig {
     @Bean
     ConnectorRegistry connectorRegistry(List<ConnectorProvider> providers) {
         return new ConnectorRegistry(providers);
+    }
+
+    @Bean
+    DefinitionRegistry definitionRegistry(
+            DefinitionRepositoryPort definitions,
+            ProcessDefinitionParser parser,
+            @Value("${bpms.definition-cache.maximum-size:500}") long maximumSize,
+            @Value("${bpms.definition-cache.expire-after-access:6h}") Duration expireAfterAccess
+    ) {
+        return new CachingDefinitionRegistry(definitions, parser, maximumSize, expireAfterAccess);
     }
 
     @Bean

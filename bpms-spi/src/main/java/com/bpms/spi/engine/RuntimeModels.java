@@ -33,7 +33,6 @@ public final class RuntimeModels {
             int version,
             String sourceFormat,
             String bpmnXml,
-            String parsedJson,
             Instant createdAt
     ) {}
 

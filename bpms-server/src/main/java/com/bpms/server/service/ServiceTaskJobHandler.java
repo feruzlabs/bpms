@@ -7,8 +7,7 @@ import com.bpms.spi.engine.RuntimeModels.JobRecord;
 import com.bpms.spi.engine.RuntimeModels.JobStatus;
 import com.bpms.spi.engine.RuntimeModels.TokenRecord;
 import com.bpms.spi.engine.RuntimeModels.TokenStatus;
-import com.bpms.spi.parse.ProcessDefinitionParser;
-import com.bpms.spi.port.DefinitionRepositoryPort;
+import com.bpms.spi.port.DefinitionRegistry;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
@@ -28,8 +27,7 @@ public class ServiceTaskJobHandler implements JobQueuePort.JobHandler {
     private final JobRepositoryPort jobs;
     private final TokenRepositoryPort tokens;
     private final InstanceRepositoryPort instances;
-    private final DefinitionRepositoryPort definitions;
-    private final ProcessDefinitionParser parser;
+    private final DefinitionRegistry registry;
     private final ObjectProvider<ExecutionEngine> engine;
     private final ObjectMapper json;
 
@@ -37,16 +35,14 @@ public class ServiceTaskJobHandler implements JobQueuePort.JobHandler {
             JobRepositoryPort jobs,
             TokenRepositoryPort tokens,
             InstanceRepositoryPort instances,
-            DefinitionRepositoryPort definitions,
-            ProcessDefinitionParser parser,
+            DefinitionRegistry registry,
             ObjectProvider<ExecutionEngine> engine,
             ObjectMapper json
     ) {
         this.jobs = jobs;
         this.tokens = tokens;
         this.instances = instances;
-        this.definitions = definitions;
-        this.parser = parser;
+        this.registry = registry;
         this.engine = engine;
         this.json = json;
     }
@@ -71,9 +67,7 @@ public class ServiceTaskJobHandler implements JobQueuePort.JobHandler {
 
             TokenRecord token = tokens.findTokenById(current.tokenId()).orElseThrow();
             InstanceRecord instance = instances.findInstanceById(current.instanceId()).orElseThrow();
-            ProcessDefinition model = parser.parse(
-                    definitions.findDefinitionById(instance.definitionId()).orElseThrow().bpmnXml().getBytes()
-            ).definition();
+            ProcessDefinition model = registry.get(instance.definitionId());
 
             ExecutionEngine executionEngine = engine.getObject();
             executionEngine.executeConnector(token, businessKey, connectorId, inputs);
