@@ -20,6 +20,8 @@ import com.bpms.spi.parse.ProcessDefinitionParser;
 import com.bpms.spi.port.ClockPort;
 import com.bpms.spi.port.DefinitionRegistry;
 import com.bpms.spi.port.DefinitionRepositoryPort;
+import com.bpms.spi.port.ExecutionLogPort;
+import com.bpms.spi.port.ExecutionLogPort.LogEntry;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.TaskRepositoryPort;
 import com.bpms.spi.port.TokenRepositoryPort;
@@ -45,6 +47,7 @@ public class ProcessEngineService implements ProcessEnginePort {
     private final TaskRepositoryPort tasks;
     private final ExecutionEngine engine;
     private final ClockPort clock;
+    private final ExecutionLogPort execLog;
 
     public ProcessEngineService(
             ProcessDefinitionParser parser,
@@ -55,7 +58,8 @@ public class ProcessEngineService implements ProcessEnginePort {
             VariableStorePort variables,
             TaskRepositoryPort tasks,
             ExecutionEngine engine,
-            ClockPort clock
+            ClockPort clock,
+            ExecutionLogPort execLog
     ) {
         this.parser = parser;
         this.registry = registry;
@@ -66,6 +70,7 @@ public class ProcessEngineService implements ProcessEnginePort {
         this.tasks = tasks;
         this.engine = engine;
         this.clock = clock;
+        this.execLog = execLog;
     }
 
     @Override
@@ -93,6 +98,12 @@ public class ProcessEngineService implements ProcessEnginePort {
         String iid = UUID.randomUUID().toString();
         instances.save(new InstanceRecord(iid, d.id(), businessKey, InstanceStatus.RUNNING, clock.now(), null));
         variables.putAll(iid, input == null ? Map.of() : input);
+        Map<String, Object> startDetails = new java.util.LinkedHashMap<>();
+        startDetails.put("variables", input == null ? Map.of() : new java.util.LinkedHashMap<>(input));
+        execLog.log(new LogEntry(
+                iid, null, null, null, null,
+                "INSTANCE_START", "OK", businessKey,
+                startDetails, null, clock.now()));
         StartEventNode start = model.nodes().stream()
                 .filter(StartEventNode.class::isInstance)
                 .map(StartEventNode.class::cast)

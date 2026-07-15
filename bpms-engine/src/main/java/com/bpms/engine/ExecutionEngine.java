@@ -22,6 +22,8 @@ import com.bpms.spi.engine.RuntimeModels.TokenStatus;
 import com.bpms.spi.engine.RuntimeModels.UserTaskRecord;
 import com.bpms.spi.expression.ExpressionEvaluator;
 import com.bpms.spi.port.ClockPort;
+import com.bpms.spi.port.ExecutionLogPort;
+import com.bpms.spi.port.ExecutionLogPort.LogEntry;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
@@ -30,10 +32,14 @@ import com.bpms.spi.port.TokenRepositoryPort;
 import com.bpms.spi.port.VariableStorePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /** Framework-free token walker. Persistence stays behind SPI ports. */
@@ -50,7 +56,37 @@ public final class ExecutionEngine {
     private final ClockPort clock;
     private final boolean asyncServiceTasks;
     private final ObjectMapper json;
+    private final ExecutionLogPort execLog;
 
+    public ExecutionEngine(
+            ConnectorRegistry connectors,
+            ExpressionEvaluator expressions,
+            InstanceRepositoryPort instances,
+            TokenRepositoryPort tokens,
+            VariableStorePort variables,
+            TaskRepositoryPort tasks,
+            JobRepositoryPort jobs,
+            JobQueuePort jobQueue,
+            ClockPort clock,
+            boolean asyncServiceTasks,
+            ObjectMapper json,
+            ExecutionLogPort execLog
+    ) {
+        this.connectors = connectors;
+        this.expressions = expressions;
+        this.instances = instances;
+        this.tokens = tokens;
+        this.variables = variables;
+        this.tasks = tasks;
+        this.jobs = jobs;
+        this.jobQueue = jobQueue;
+        this.clock = clock;
+        this.asyncServiceTasks = asyncServiceTasks;
+        this.json = json;
+        this.execLog = Objects.requireNonNullElse(execLog, NoOpExecutionLogPort.INSTANCE);
+    }
+
+    /** Backward-compatible overload for tests that omit the log port. */
     public ExecutionEngine(
             ConnectorRegistry connectors,
             ExpressionEvaluator expressions,
@@ -64,17 +100,8 @@ public final class ExecutionEngine {
             boolean asyncServiceTasks,
             ObjectMapper json
     ) {
-        this.connectors = connectors;
-        this.expressions = expressions;
-        this.instances = instances;
-        this.tokens = tokens;
-        this.variables = variables;
-        this.tasks = tasks;
-        this.jobs = jobs;
-        this.jobQueue = jobQueue;
-        this.clock = clock;
-        this.asyncServiceTasks = asyncServiceTasks;
-        this.json = json;
+        this(connectors, expressions, instances, tokens, variables, tasks, jobs, jobQueue,
+                clock, asyncServiceTasks, json, NoOpExecutionLogPort.INSTANCE);
     }
 
     public void run(ProcessDefinition definition, TokenRecord token, String businessKey) {
@@ -173,12 +200,18 @@ public final class ExecutionEngine {
                         .filter(f -> f.condition().isPresent()
                                 && expressions.evaluateLogic(f.condition().get().expression(), evalVars))
                         .toList();
+                boolean usedDefault;
                 if (!matched.isEmpty()) {
                     outgoing = List.of(matched.getFirst());
+                    usedDefault = false;
                 } else {
                     outgoing = outgoing.stream()
                             .filter(f -> f.id().equals(gateway.defaultFlowId()))
                             .toList();
+                    usedDefault = true;
+                }
+                if (!outgoing.isEmpty()) {
+                    logGateway(at, gateway, outgoing.getFirst(), matched, usedDefault);
                 }
             }
 
@@ -212,15 +245,44 @@ public final class ExecutionEngine {
     }
 
     public void executeConnector(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
+        Instant t0 = clock.now();
+        execLog.log(new LogEntry(
+                token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                "CONNECTOR_START", null, null,
+                Map.of("inputs", safeMap(inputs)), null, clock.now()));
+
         Map<String, Object> vars = variables.getAll(token.instanceId());
-        ConnectorResult result = connectors.required(connectorId)
-                .execute(new ConnectorContext(businessKey, vars, inputs));
+        ConnectorResult result;
+        try {
+            result = connectors.required(connectorId)
+                    .execute(new ConnectorContext(businessKey, vars, inputs));
+        } catch (Exception e) {
+            markFailed(token, e.getMessage());
+            execLog.log(new LogEntry(
+                    token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                    "CONNECTOR_ERROR", "FAIL", e.getMessage(),
+                    details(inputs, null), durationMs(t0), clock.now()));
+            execLog.log(tokenFailed(token, e.getMessage()));
+            execLog.log(instanceEnd(token.instanceId(), "FAIL", e.getMessage()));
+            throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
+        }
+
         if (!result.success()) {
-            tokens.save(new TokenRecord(token.id(), token.instanceId(), token.currentNodeId(), TokenStatus.FAILED, null));
-            instances.save(withStatus(token.instanceId(), InstanceStatus.FAILED));
+            markFailed(token, result.errorMessage());
+            execLog.log(new LogEntry(
+                    token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                    "CONNECTOR_ERROR", "FAIL", result.errorMessage(),
+                    details(inputs, result.outputs()), durationMs(t0), clock.now()));
+            execLog.log(tokenFailed(token, result.errorMessage()));
+            execLog.log(instanceEnd(token.instanceId(), "FAIL", result.errorMessage()));
             throw new IllegalStateException("Connector failed: " + connectorId + " — " + result.errorMessage());
         }
+
         variables.putAll(token.instanceId(), result.outputs());
+        execLog.log(new LogEntry(
+                token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                "CONNECTOR_END", "OK", null,
+                details(inputs, result.outputs()), durationMs(t0), clock.now()));
     }
 
     private void enqueueServiceTask(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
@@ -242,6 +304,47 @@ public final class ExecutionEngine {
         }
     }
 
+    private void logGateway(
+            TokenRecord token,
+            ExclusiveGatewayNode gateway,
+            SequenceFlow chosen,
+            List<SequenceFlow> matched,
+            boolean usedDefault
+    ) {
+        String label = usedDefault
+                ? "→ " + chosen.id() + " (default)"
+                : "→ " + chosen.id();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("chosenFlowId", chosen.id());
+        details.put("targetRef", chosen.targetRef());
+        details.put("default", usedDefault);
+        if (!matched.isEmpty() && matched.getFirst().condition().isPresent()) {
+            details.put("condition", matched.getFirst().condition().get().expression());
+        } else if (gateway.defaultFlowId() != null) {
+            details.put("defaultFlowId", gateway.defaultFlowId());
+        }
+        execLog.log(new LogEntry(
+                token.instanceId(), token.id(), gateway.id(), "exclusiveGateway", null,
+                "GATEWAY", "OK", label, details, null, clock.now()));
+    }
+
+    private void markFailed(TokenRecord token, String message) {
+        tokens.save(new TokenRecord(token.id(), token.instanceId(), token.currentNodeId(), TokenStatus.FAILED, null));
+        instances.save(withStatus(token.instanceId(), InstanceStatus.FAILED));
+    }
+
+    private LogEntry tokenFailed(TokenRecord token, String message) {
+        return new LogEntry(
+                token.instanceId(), token.id(), token.currentNodeId(), null, null,
+                "TOKEN_FAILED", "FAIL", message, null, null, clock.now());
+    }
+
+    private LogEntry instanceEnd(String instanceId, String status, String message) {
+        return new LogEntry(
+                instanceId, null, null, null, null,
+                "INSTANCE_END", status, message, null, null, clock.now());
+    }
+
     private InstanceRecord withStatus(String id, InstanceStatus status) {
         InstanceRecord old = instances.findInstanceById(id).orElseThrow();
         return new InstanceRecord(
@@ -259,6 +362,37 @@ public final class ExecutionEngine {
                 .allMatch(t -> t.status() == TokenStatus.COMPLETED || t.status() == TokenStatus.FAILED);
         if (allDone) {
             instances.save(withStatus(instanceId, InstanceStatus.COMPLETED));
+            execLog.log(instanceEnd(instanceId, "OK", null));
         }
+    }
+
+    private int durationMs(Instant t0) {
+        return (int) Math.max(0, Duration.between(t0, clock.now()).toMillis());
+    }
+
+    private static Map<String, Object> details(Map<String, Object> inputs, Map<String, Object> outputs) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("inputs", safeMap(inputs));
+        if (outputs != null) {
+            d.put("outputs", safeMap(outputs));
+        }
+        return d;
+    }
+
+    /** Keep log details JSON-friendly (avoid recursive graphs). */
+    private static Map<String, Object> safeMap(Map<String, Object> src) {
+        if (src == null) {
+            return Map.of();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (var e : src.entrySet()) {
+            Object v = e.getValue();
+            if (v == null || v instanceof Number || v instanceof Boolean || v instanceof String) {
+                out.put(e.getKey(), v);
+            } else {
+                out.put(e.getKey(), String.valueOf(v));
+            }
+        }
+        return out;
     }
 }

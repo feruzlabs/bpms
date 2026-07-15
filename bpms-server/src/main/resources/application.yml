@@ -41,6 +41,8 @@ management:
 
 bpms:
   job-queue: ${BPMS_JOB_QUEUE:in-process}
+  execution-log:
+    enabled: ${BPMS_EXEC_LOG:true}
 
 creditconveyer:
   endpoint: ${CREDITCONVEYER_ENDPOINT:http://172.28.202.107:8085}

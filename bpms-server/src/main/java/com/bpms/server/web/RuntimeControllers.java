@@ -4,6 +4,7 @@ import com.bpms.server.service.DeploymentWarningsException;
 import com.bpms.spi.engine.ProcessEnginePort;
 import com.bpms.spi.engine.RuntimeModels.*;
 import com.bpms.spi.port.DefinitionRepositoryPort;
+import com.bpms.spi.port.ExecutionLogPort;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
@@ -24,10 +25,29 @@ class DeployController {
 @RequestMapping("/api/v1/process-instances")
 class ProcessInstanceController {
     private final ProcessEnginePort engine;
-    ProcessInstanceController(ProcessEnginePort engine){this.engine=engine;}
-    @PostMapping InstanceView start(@RequestBody StartRequest request){return engine.start(request.definitionKey()!=null?request.definitionKey():request.definitionId(),request.businessKey(),request.variables());}
-    @GetMapping("/{id}") InstanceView get(@PathVariable String id){return engine.getInstance(id);}
-    record StartRequest(String definitionKey,String definitionId,String businessKey,Map<String,Object> variables){}
+    private final ExecutionLogPort execLog;
+    ProcessInstanceController(ProcessEnginePort engine, ExecutionLogPort execLog) {
+        this.engine = engine;
+        this.execLog = execLog;
+    }
+    @PostMapping InstanceView start(@RequestBody StartRequest request) {
+        return engine.start(
+                request.definitionKey() != null ? request.definitionKey() : request.definitionId(),
+                request.businessKey(),
+                request.variables());
+    }
+    @GetMapping("/{id}") InstanceView get(@PathVariable String id) {
+        return engine.getInstance(id);
+    }
+    @GetMapping("/{id}/logs")
+    List<ExecutionLogPort.LogEntry> logs(
+            @PathVariable String id,
+            @RequestParam(required = false) String eventType) {
+        // ensure instance exists
+        engine.getInstance(id);
+        return execLog.byInstance(id, eventType);
+    }
+    record StartRequest(String definitionKey, String definitionId, String businessKey, Map<String, Object> variables) {}
 }
 
 @RestController

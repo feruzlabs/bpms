@@ -3,6 +3,7 @@ package com.bpms.server.config;
 import com.bpms.engine.CachingDefinitionRegistry;
 import com.bpms.engine.ConnectorRegistry;
 import com.bpms.engine.ExecutionEngine;
+import com.bpms.engine.NoOpExecutionLogPort;
 import com.bpms.expression.SpelExpressionEvaluator;
 import com.bpms.parser.camunda.CamundaCompatParser;
 import com.bpms.spi.connector.ConnectorProvider;
@@ -11,6 +12,7 @@ import com.bpms.spi.parse.ProcessDefinitionParser;
 import com.bpms.spi.port.ClockPort;
 import com.bpms.spi.port.DefinitionRegistry;
 import com.bpms.spi.port.DefinitionRepositoryPort;
+import com.bpms.spi.port.ExecutionLogPort;
 import com.bpms.spi.port.InstanceRepositoryPort;
 import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
@@ -20,6 +22,7 @@ import com.bpms.spi.port.VariableStorePort;
 import com.bpms.spi.script.ScriptNamespaceProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -61,6 +64,12 @@ public class EngineConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "bpms.execution-log.enabled", havingValue = "false")
+    ExecutionLogPort noOpExecutionLogPort() {
+        return NoOpExecutionLogPort.INSTANCE;
+    }
+
+    @Bean
     ExecutionEngine executionEngine(
             ConnectorRegistry registry,
             ExpressionEvaluator expressionEvaluator,
@@ -72,11 +81,12 @@ public class EngineConfig {
             JobQueuePort jobQueue,
             ClockPort clock,
             ObjectMapper objectMapper,
+            ExecutionLogPort execLog,
             @Value("${bpms.job-queue:in-process}") String jobQueueMode
     ) {
         boolean async = "rabbit".equalsIgnoreCase(jobQueueMode);
         return new ExecutionEngine(
                 registry, expressionEvaluator, instances, tokens, variables, tasks, jobs, jobQueue,
-                clock, async, objectMapper);
+                clock, async, objectMapper, execLog);
     }
 }
