@@ -31,6 +31,7 @@
         <dependency><groupId>com.bpms</groupId><artifactId>bpms-engine</artifactId></dependency>
         <dependency><groupId>com.bpms</groupId><artifactId>bpms-persistence-jpa</artifactId></dependency>
         <dependency><groupId>com.bpms</groupId><artifactId>bpms-queue-rabbit</artifactId></dependency>
+        <dependency><groupId>com.bpms</groupId><artifactId>bpms-connectors-creditconveyer</artifactId></dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

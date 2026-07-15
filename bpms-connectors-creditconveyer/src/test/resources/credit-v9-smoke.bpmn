@@ -4,44 +4,50 @@
                   xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
                   xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
                   xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
-                  id="Definitions_demo_credit_scoring"
-                  targetNamespace="https://bpms.new">
-  <bpmn:process id="demo-credit-scoring" name="Demo credit scoring" isExecutable="true">
+                  id="Definitions_credit_v9_smoke"
+                  targetNamespace="https://bpms.new/credit-v9">
+  <bpmn:process id="credit-v9-smoke" name="credit-v9-smoke" isExecutable="true">
     <bpmn:startEvent id="start" name="start"/>
 
-    <bpmn:serviceTask id="score" name="Score">
+    <bpmn:serviceTask id="score" name="GetScoringResultV9">
       <bpmn:extensionElements>
         <camunda:connector>
-          <camunda:connectorId>demo-credit-score</camunda:connectorId>
+          <camunda:connectorId>GetScoringResultV9Connector</camunda:connectorId>
           <camunda:inputOutput>
-            <camunda:inputParameter name="amount">amount.doubleValue()</camunda:inputParameter>
-            <camunda:inputParameter name="monthlyIncome">monthlyIncome.doubleValue()</camunda:inputParameter>
+            <camunda:inputParameter name="token">#root['token']</camunda:inputParameter>
+            <camunda:inputParameter name="IsSuccessVarSet">isOk</camunda:inputParameter>
+            <camunda:inputParameter name="ErrorMsgVarSet">errMsg</camunda:inputParameter>
+            <camunda:inputParameter name="ResponseVarSet">scoreResp</camunda:inputParameter>
+            <camunda:inputParameter name="ScoringMessage">scoringMsg</camunda:inputParameter>
+            <camunda:inputParameter name="ClientAvgIncomeSum">avgIncome</camunda:inputParameter>
+            <camunda:inputParameter name="ClientCreditSumVarSet">loansJson</camunda:inputParameter>
+            <camunda:inputParameter name="ClientStatusVarSet">clientStatus</camunda:inputParameter>
           </camunda:inputOutput>
         </camunda:connector>
       </bpmn:extensionElements>
     </bpmn:serviceTask>
 
-    <bpmn:exclusiveGateway id="decision" name="score &gt;= 50?" default="toReject"/>
+    <bpmn:exclusiveGateway id="gw" name="isOk?" default="toRejected"/>
     <bpmn:endEvent id="approved" name="approved"/>
     <bpmn:endEvent id="rejected" name="rejected"/>
 
     <bpmn:sequenceFlow id="toScore" sourceRef="start" targetRef="score"/>
-    <bpmn:sequenceFlow id="toDecision" sourceRef="score" targetRef="decision"/>
-    <bpmn:sequenceFlow id="toApprove" name="approve" sourceRef="decision" targetRef="approved">
-      <bpmn:conditionExpression>score.intValue() &gt;= 50</bpmn:conditionExpression>
+    <bpmn:sequenceFlow id="toGw" sourceRef="score" targetRef="gw"/>
+    <bpmn:sequenceFlow id="toApproved" name="ok" sourceRef="gw" targetRef="approved">
+      <bpmn:conditionExpression>#root['isOk'] == true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="toReject" name="reject" sourceRef="decision" targetRef="rejected"/>
+    <bpmn:sequenceFlow id="toRejected" name="fail" sourceRef="gw" targetRef="rejected"/>
   </bpmn:process>
 
   <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="demo-credit-scoring">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="credit-v9-smoke">
       <bpmndi:BPMNShape id="Shape_start" bpmnElement="start">
         <dc:Bounds x="152" y="102" width="36" height="36"/>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_score" bpmnElement="score">
         <dc:Bounds x="240" y="80" width="100" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_decision" bpmnElement="decision" isMarkerVisible="true">
+      <bpmndi:BPMNShape id="Shape_gw" bpmnElement="gw" isMarkerVisible="true">
         <dc:Bounds x="395" y="95" width="50" height="50"/>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_approved" bpmnElement="approved">
@@ -55,16 +61,16 @@
         <di:waypoint x="188" y="120"/>
         <di:waypoint x="240" y="120"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Edge_toDecision" bpmnElement="toDecision">
+      <bpmndi:BPMNEdge id="Edge_toGw" bpmnElement="toGw">
         <di:waypoint x="340" y="120"/>
         <di:waypoint x="395" y="120"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Edge_toApprove" bpmnElement="toApprove">
+      <bpmndi:BPMNEdge id="Edge_toApproved" bpmnElement="toApproved">
         <di:waypoint x="420" y="95"/>
         <di:waypoint x="420" y="60"/>
         <di:waypoint x="502" y="60"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Edge_toReject" bpmnElement="toReject">
+      <bpmndi:BPMNEdge id="Edge_toRejected" bpmnElement="toRejected">
         <di:waypoint x="420" y="145"/>
         <di:waypoint x="420" y="180"/>
         <di:waypoint x="502" y="180"/>

@@ -39,6 +39,9 @@
       BPMS_JOB_QUEUE: in-process
       BPMS_RABBIT_HEALTH_ENABLED: "true"
       BPMS_RABBIT_LISTENER_ENABLED: "false"
+      CREDITCONVEYER_ENDPOINT: ${CREDITCONVEYER_ENDPOINT:-http://host.docker.internal:8081}
+      BPMS_USER: ${BPMS_USER:-bpms}
+      BPMS_PASS: ${BPMS_PASS:-bpms}
     ports: ["8090:8090"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health || exit 1"]

@@ -26,6 +26,7 @@
         <module>bpms-engine</module>
         <module>bpms-persistence-jpa</module>
         <module>bpms-queue-rabbit</module>
+        <module>bpms-connectors-creditconveyer</module>
         <module>bpms-server</module>
     </modules>
 
@@ -70,6 +71,11 @@
             <dependency>
                 <groupId>com.bpms</groupId>
                 <artifactId>bpms-queue-rabbit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.bpms</groupId>
+                <artifactId>bpms-connectors-creditconveyer</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

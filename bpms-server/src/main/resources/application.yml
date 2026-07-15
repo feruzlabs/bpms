@@ -42,6 +42,16 @@ management:
 bpms:
   job-queue: ${BPMS_JOB_QUEUE:in-process}
 
+creditconveyer:
+  endpoint: ${CREDITCONVEYER_ENDPOINT:http://172.28.202.107:8085}
+  bpms:
+    user: ${BPMS_USER:bpms}
+    pass: ${BPMS_PASS:bpms}
+  http:
+    connect-timeout: 10s
+    read-timeout: 60s
+    write-timeout: 30s
+
 springdoc:
   api-docs:
     path: /v3/api-docs
