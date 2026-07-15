@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_1"
+                  targetNamespace="http://bpms.local/test">
+  <bpmn:process id="SimpleProcess" name="Simple Process" isExecutable="true">
+    <bpmn:startEvent id="Start"/>
+    <bpmn:serviceTask id="DoWork" name="Do Work">
+      <bpmn:extensionElements>
+        <camunda:connector>
+          <camunda:connectorId>DemoConnector</camunda:connectorId>
+          <camunda:inputOutput>
+            <camunda:inputParameter name="pinfl">123</camunda:inputParameter>
+            <camunda:outputParameter name="ok">true</camunda:outputParameter>
+          </camunda:inputOutput>
+        </camunda:connector>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway" default="Flow_default"/>
+    <bpmn:endEvent id="EndOk"/>
+    <bpmn:endEvent id="EndNo"/>
+    <bpmn:sequenceFlow id="Flow1" sourceRef="Start" targetRef="DoWork"/>
+    <bpmn:sequenceFlow id="Flow2" sourceRef="DoWork" targetRef="Gateway"/>
+    <bpmn:sequenceFlow id="Flow_yes" sourceRef="Gateway" targetRef="EndOk">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">ok == true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_default" sourceRef="Gateway" targetRef="EndNo"/>
+  </bpmn:process>
+</bpmn:definitions>

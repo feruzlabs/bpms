@@ -1,0 +1,41 @@
+# bpms-new-backend — Cursor rules
+
+## Project
+From-scratch BPMN engine for the credit-conveyor (liveScoring/rcc). Runs SIDE-BY-SIDE with the old engine; the old
+engine is never modified. Authoritative plan: `../../plans/14-bpms-schema-compatibility.md` (and plans 12, 13).
+Read the plan before generating code. The user plans; you implement — do not silently change scope.
+
+## GUARDRAILS
+1. Write new-engine code ONLY inside `bpms/bpms-new-backend/`.
+2. Default-protect the OLD engine `bpms/liveScoring-bpms-backend/` (v1–v8 prod + v9): during NEW-engine work it is
+   READ-ONLY — read it for Camunda dialect / parity facts, never modify as a side effect.
+   OVERRIDE (allowed): if the chat's explicit task IS to change the old engine (e.g. v9 connector work / a bugfix),
+   editing it is fine. The read-only default only prevents ACCIDENTAL edits during new-engine work.
+3. Separate deployment, separate DB schema, separate port. No incidental commits to the old repo.
+
+## Stack (fixed — do not substitute versions)
+- Java 21: records, sealed interfaces, pattern-matching switch, Virtual Threads.
+- Spring Boot 3.5.14: use `jakarta.*` (never `javax.*`). This is a fresh Boot 3 project, NOT a Boot 2→3 migration.
+- Architecture: Hexagonal (Ports & Adapters) + SPI. Type-safe connector registry (`Map<String,Connector>`, never
+  `getBean(String)`). No god-classes; small, testable services.
+
+## Schema compatibility (core requirement — plan 14)
+- The new parser (`CamundaCompatParser`) must reproduce the OLD engine's Camunda reading rules so existing `.bpmn`
+  schemas load with zero / minimal change. Any element it cannot cover → an explicit `CompatWarning`, never silently
+  dropped.
+- Verified old-engine dialect facts to honor (see plan 14 §1):
+  - Connector: `<camunda:connector><camunda:connectorId>BeanName</camunda:connectorId><camunda:inputOutput>…`
+    (NOT `camunda:property`). connectorId == Spring bean name.
+  - Forms: `camunda:formData` / `camunda:formField`; type in {string,json,boolean,date,long,enum} → typed, any other
+    string → CUSTOM_TYPE. `properties` / `validations` are flat string maps.
+  - Conditions & listener expressions: Spring SpEL, gated by the `isExprStr` char-heuristic (a string is treated as an
+    expression only if it contains one of `+ - * / . , $ ' "`, else it is a literal). Evaluation error → null → false.
+  - Multi-instance is supported (sequential/parallel, cardinality/collection/completionCondition).
+  - Event definitions are limited to Message + Timer (no signal/error/escalation).
+- Script namespace is an ABSTRACT SPI: each domain registers its own helper (`namespace → bean`) into the expression
+  context. Do NOT hardcode `bpms.hrms.*` / `bpms.labour.*` — those are another (HR) domain's calls that leaked into the
+  old core by mistake and are not this domain's concern.
+
+## Before writing
+- Phase 0 blockers are still open (nested form-field property persistence variant; other teams' sample schemas —
+  plan 14 §4). Do not guess these. If a decision depends on them, stop and ask rather than assume.
