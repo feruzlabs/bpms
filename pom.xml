@@ -23,6 +23,9 @@
         <module>bpms-spi</module>
         <module>bpms-expression</module>
         <module>bpms-parser-camunda</module>
+        <module>bpms-engine</module>
+        <module>bpms-persistence-jpa</module>
+        <module>bpms-queue-rabbit</module>
         <module>bpms-server</module>
     </modules>
 
@@ -52,6 +55,21 @@
             <dependency>
                 <groupId>com.bpms</groupId>
                 <artifactId>bpms-parser-camunda</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.bpms</groupId>
+                <artifactId>bpms-engine</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.bpms</groupId>
+                <artifactId>bpms-persistence-jpa</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.bpms</groupId>
+                <artifactId>bpms-queue-rabbit</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

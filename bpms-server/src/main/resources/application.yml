@@ -4,6 +4,25 @@ server:
 spring:
   application:
     name: bpms-new-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/bpms_new}
+    username: ${SPRING_DATASOURCE_USERNAME:bpms}
+    password: ${SPRING_DATASOURCE_PASSWORD:bpms}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5673}
+    username: ${SPRING_RABBITMQ_USERNAME:bpms}
+    password: ${SPRING_RABBITMQ_PASSWORD:bpms}
+    listener:
+      simple:
+        auto-startup: ${BPMS_RABBIT_LISTENER_ENABLED:false}
   threads:
     virtual:
       enabled: true
@@ -13,6 +32,15 @@ management:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    rabbit:
+      enabled: ${BPMS_RABBIT_HEALTH_ENABLED:false}
+
+bpms:
+  job-queue: ${BPMS_JOB_QUEUE:in-process}
 
 springdoc:
   api-docs:

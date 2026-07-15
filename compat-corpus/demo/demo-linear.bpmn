@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" targetNamespace="https://bpms.new">
+  <bpmn:process id="demo-linear" name="Demo linear" isExecutable="true">
+    <bpmn:startEvent id="start"/>
+    <bpmn:serviceTask id="noopTask" name="No-op">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>noop</camunda:connectorId></camunda:connector></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="decision" default="toLow"/>
+    <bpmn:endEvent id="end_ok"/><bpmn:endEvent id="end_low"/>
+    <bpmn:sequenceFlow id="toNoop" sourceRef="start" targetRef="noopTask"/>
+    <bpmn:sequenceFlow id="toDecision" sourceRef="noopTask" targetRef="decision"/>
+    <bpmn:sequenceFlow id="toOk" sourceRef="decision" targetRef="end_ok"><bpmn:conditionExpression>amount.intValue() &gt; 100</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="toLow" sourceRef="decision" targetRef="end_low"/>
+  </bpmn:process>
+</bpmn:definitions>
