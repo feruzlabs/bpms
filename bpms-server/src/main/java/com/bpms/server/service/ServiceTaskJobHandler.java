@@ -9,9 +9,9 @@ import com.bpms.spi.engine.RuntimeModels.TokenRecord;
 import com.bpms.spi.engine.RuntimeModels.TokenStatus;
 import com.bpms.spi.port.DefinitionRegistry;
 import com.bpms.spi.port.InstanceRepositoryPort;
-import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
 import com.bpms.spi.port.TokenRepositoryPort;
+import com.bpms.spi.port.TypedJobHandler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.ObjectProvider;
@@ -22,7 +22,9 @@ import java.util.Map;
 
 /** Completes SERVICE_TASK jobs for both in-process and Rabbit consumers. */
 @Component
-public class ServiceTaskJobHandler implements JobQueuePort.JobHandler {
+public class ServiceTaskJobHandler implements TypedJobHandler {
+
+    public static final String TYPE = "SERVICE_TASK";
 
     private final JobRepositoryPort jobs;
     private final TokenRepositoryPort tokens;
@@ -45,6 +47,11 @@ public class ServiceTaskJobHandler implements JobQueuePort.JobHandler {
         this.registry = registry;
         this.engine = engine;
         this.json = json;
+    }
+
+    @Override
+    public String type() {
+        return TYPE;
     }
 
     @Override

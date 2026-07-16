@@ -44,11 +44,20 @@ bpms:
   execution-log:
     enabled: ${BPMS_EXEC_LOG:true}
 
+bi:
+  endpoint: ${BI_ENDPOINT:}
+
 creditconveyer:
   endpoint: ${CREDITCONVEYER_ENDPOINT:http://172.28.202.107:8085}
   bpms:
     user: ${BPMS_USER:bpms}
     pass: ${BPMS_PASS:bpms}
+  login: ${CC_LOGIN:bpms}
+  passport: ${CC_PASSPORT:bpms}
+  tune:
+    endpoint:
+      prod: ${CC_TUNE_ENDPOINT:}
+    apiAuthBasic: ${CC_TUNE_BASIC:}
   http:
     connect-timeout: 10s
     read-timeout: 60s

@@ -1,0 +1,63 @@
+package com.bpms.connectors.creditconveyer.vo;
+
+public class ConveyorPaths {
+    public static final String LOGIN_APP_PATH = "/v1/auth/default/login-app?_f=json";
+    public static final String CREATE_REQUEST_V3 = "/v3/mobile/client/create-request";
+    public static final String CREATE_REQUEST_V5 = "/v5/mobile/client/create-request";
+    public static final String CREATE_REQUEST_V7 = "/v5/mobile/client/create-request";
+    public static final String CREATE_REQUEST_V6 = "/v6/mobile/client/create-request";
+    public static final String CREATE_REQUEST_V7_1 = "/v7/mobile/client/create-request";
+    public static final String GET_REQUEST_RESULT_V2 = "/v2/mobile/client/get-result-by-token?token=";
+    public static final String GET_REQUEST_RESULT_V3 = "/v3/mobile/client/get-result-by-token?token=";
+    public static final String GET_REQUEST_RESULT_V4 = "/v4/mobile/client/get-result-by-token?token=";
+    public static final String GET_REQUEST_RESULT_V5 = "/v5/mobile/client/get-result-by-token?token=";
+    public static final String GET_REQUEST_RESULT_V6 = "/v6/mobile/client/score/";
+    public static final String GET_REQUEST_RESULT_V7_1 = "/v7/mobile/client/score/";
+    public static final String GET_CLIENT_INFO_V2 = "/v2/mobile/client/info/";
+    public static final String GET_CLIENT_INFO_V3 = "/v3/mobile/client/info/";
+    public static final String GET_CLIENT_INFO_V4 = "/v4/mobile/client/info/";
+    public static final String GET_CLIENT_INFO_V5 = "/v5/mobile/client/info/";
+    public static final String GET_CLIENT_INFO_V6 = "/v6/mobile/client/info/";
+    public static final String GET_CLIENT_INFO_V7_1 = "/v7/mobile/client/info/";
+    public static final String REFRESH_IIB_V2 = "/v2/mobile/client/refresh/iib/";
+    public static final String REFRESH_IIB_V3 = "/v3/mobile/client/refresh/iib/";
+    public static final String REFRESH_IABS_DATA_V1 = "/v1/mobile/client/get-client-iabs-data?token=";
+    public static final String REFRESH_IABS_DATA_V6 = "/v6/mobile/client/refresh/iabs/";
+    public static final String REFRESH_IABS_DATA_V7_1 = "/v7/mobile/client/refresh/iabs/";
+    public static final String REFRESH_ACTIVE_ACCOUNT_DATA_V1 = "/v1/mobile/client/get-active-accounts-v3?token=";
+    public static final String REFRESH_ACTIVE_ACCOUNT_DATA_V6 = "/v6/mobile/client/refresh/accounts/active/";
+    public static final String REFRESH_ACTIVE_ACCOUNT_DATA_V7_1 = "/v7/mobile/client/refresh/accounts/active/";
+    public static final String REFRESH_NPS_V2 = "/v2/mobile/client/refresh/nps/";
+    public static final String REFRESH_NPS_V3 = "/v3/mobile/client/refresh/nps/";
+    public static final String REFRESH_NPS_V5 = "/v5/mobile/client/refresh/nps/";
+    public static final String REFRESH_NPS_V6 = "/v6/mobile/client/refresh/nps/";
+    public static final String REFRESH_NPS_V7_1 = "/v7/mobile/client/refresh/nps/";
+    public static final String REFRESH_KATM_22_V2 = "/v2/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_22_V3 = "/v3/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_22_V5 = "/v5/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_22_V6 = "/v6/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_22_V7_1 = "/v7/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_77_V2 = "/v2/mobile/client/refresh/katm/77/";
+    public static final String REFRESH_KATM_77_V3 = "/v3/mobile/client/refresh/katm/77/";
+    public static final String REFRESH_KATM_77_V5 = "/v5/mobile/client/refresh/katm/77/";
+    public static final String REFRESH_KATM_77_V6 = "/v6/mobile/client/refresh/katm/77/";
+    public static final String REFRESH_KATM_77_V7_v1 = "/v7/mobile/client/refresh/katm/77/";
+    public static final String CLOSE_KATM_REQUEST = "/v6/mobile/client/delete-katm-request/";
+    public static final String CLOSE_KATM_REQUEST7_1 = "/v7/mobile/client/delete-katm-request/";
+    public static final String SEND_XAZNA_V3 = "/api/v3/refresh";
+    public static final String SEND_XAZNA_V4 = "/api/v4/refresh";
+
+
+    public static final String REFRESH_NPS_V8 = "/v8/mobile/client/refresh/nps/";
+    public static final String REFRESH_KATM_22_V8 = "/v8/mobile/client/refresh/katm/22/";
+    public static final String REFRESH_KATM_77_V8 = "/v8/mobile/client/refresh/katm/77/";
+    public static final String CLOSE_KATM_REQUEST_V8 = "/v8/mobile/client/katm/application/";
+    public static final String REFRESH_ACTIVE_ACCOUNT_DATA_V8 = "/v8/mobile/client/refresh/accounts/active/";
+    public static final String REFRESH_ACCOUNT_HISTORY_DATA_V8 = "/v8/mobile/client/refresh/%s/accounts/%d/history";
+    public static final String REFRESH_IABS_DATA_V8 = "/v8/mobile/client/refresh/iabs/";
+    public static final String GET_CLIENT_INFO_V8 = "/v8/mobile/client/info/";
+    public static final String CREATE_REQUEST_V8 = "/v8/mobile/client/request";
+    public static final String GET_REQUEST_RESULT_V8 = "/v8/mobile/client/score/";
+    public static final String REFRESH_KATM_CHECK_BAN_V8 = "/v8/mobile/client/refresh/katm/check/ban/";
+    public static final String CALC_PENSION_SUM_V8 = "/v8/mobile/client/pension/calc/";
+}

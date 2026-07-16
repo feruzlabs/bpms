@@ -4,6 +4,7 @@ import com.bpms.core.definition.ConnectorImplementation;
 import com.bpms.core.definition.EndEventNode;
 import com.bpms.core.definition.ExclusiveGatewayNode;
 import com.bpms.core.definition.FlowNode;
+import com.bpms.core.definition.InclusiveGatewayNode;
 import com.bpms.core.definition.IoParameter;
 import com.bpms.core.definition.ParallelGatewayNode;
 import com.bpms.core.definition.ProcessDefinition;
@@ -196,22 +197,48 @@ public final class ExecutionEngine {
             final Map<String, Object> evalVars = vars;
             List<SequenceFlow> outgoing = new ArrayList<>(definition.outgoing(node.id()));
             if (node instanceof ExclusiveGatewayNode gateway) {
-                List<SequenceFlow> matched = outgoing.stream()
+                List<SequenceFlow> conditional = outgoing.stream()
                         .filter(f -> f.condition().isPresent()
                                 && expressions.evaluateLogic(f.condition().get().expression(), evalVars))
                         .toList();
                 boolean usedDefault;
-                if (!matched.isEmpty()) {
-                    outgoing = List.of(matched.getFirst());
+                if (!conditional.isEmpty()) {
+                    outgoing = List.of(conditional.getFirst());
                     usedDefault = false;
                 } else {
-                    outgoing = outgoing.stream()
+                    List<SequenceFlow> outgoingFlows = outgoing;
+                    SequenceFlow fallback = outgoing.stream()
                             .filter(f -> f.id().equals(gateway.defaultFlowId()))
-                            .toList();
-                    usedDefault = true;
+                            .findFirst()
+                            .or(() -> outgoingFlows.stream()
+                                    .filter(f -> f.condition().isEmpty())
+                                    .findFirst())
+                            .orElse(null);
+                    outgoing = fallback == null ? List.of() : List.of(fallback);
+                    usedDefault = fallback != null;
                 }
                 if (!outgoing.isEmpty()) {
-                    logGateway(at, gateway, outgoing.getFirst(), matched, usedDefault);
+                    logGateway(at, gateway, outgoing.getFirst(), conditional, usedDefault);
+                }
+            }
+
+            if (node instanceof InclusiveGatewayNode gateway) {
+                List<SequenceFlow> conditional = outgoing.stream()
+                        .filter(f -> f.condition().isPresent()
+                                && expressions.evaluateLogic(f.condition().get().expression(), evalVars))
+                        .toList();
+                if (!conditional.isEmpty()) {
+                    outgoing = conditional;
+                } else {
+                    List<SequenceFlow> outgoingFlows = outgoing;
+                    SequenceFlow fallback = outgoing.stream()
+                            .filter(f -> f.id().equals(gateway.defaultFlowId()))
+                            .findFirst()
+                            .or(() -> outgoingFlows.stream()
+                                    .filter(f -> f.condition().isEmpty())
+                                    .findFirst())
+                            .orElse(null);
+                    outgoing = fallback == null ? List.of() : List.of(fallback);
                 }
             }
 

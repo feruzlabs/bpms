@@ -6,5 +6,6 @@
     <dependencies>
         <dependency><groupId>com.bpms</groupId><artifactId>bpms-spi</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-amqp</artifactId></dependency>
+        <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
     </dependencies>
 </project>
