@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- v3 schema, group 3/4: async jobs, event subscriptions, external tasks, user tasks, variable audit (plan 25). -->
+    <changeSet id="003-jobs-events" author="bpms">
+        <sql><![CDATA[
+create table job (
+  id                varchar(64) primary key,
+  tenant_id         varchar(64) not null references tenant(id) on delete restrict,
+  instance_id       varchar(64) not null references process_instance(id) on delete cascade,
+  token_id          varchar(64) references execution_token(id) on delete set null,
+  type              varchar(24) not null check (type in ('SERVICE_TASK','TIMER','MESSAGE','ASYNC_JOB','PROCESS_START')),
+  payload           jsonb,
+  status            varchar(16) not null check (status in ('PENDING','LOCKED','RUNNING','COMPLETED','FAILED','RETRY')),
+  attempts          integer not null default 0,
+  max_attempts      integer not null default 5,
+  idempotency_key   varchar(255) unique,
+  lock_expiry_at    timestamptz,
+  due_date          timestamptz,
+  repeat_cycle      varchar(64),
+  remaining_repeats integer,
+  run_at            timestamptz not null,
+  created_at        timestamptz not null default now()
+);
+create index ix_job_status_run_at on job(status, run_at);
+create index ix_job_instance on job(instance_id);
+
+create table dead_letter_job (
+  id              varchar(64) primary key,
+  original_job_id varchar(64) not null,
+  instance_id     varchar(64) not null references process_instance(id) on delete cascade,
+  type            varchar(24) not null,
+  payload         jsonb,
+  attempts        integer not null,
+  error_message   text,
+  moved_at        timestamptz not null default now()
+);
+create index ix_dead_letter_job_instance on dead_letter_job(instance_id);
+
+create table event_subscription (
+  id            varchar(64) primary key,
+  tenant_id     varchar(64) not null references tenant(id) on delete restrict,
+  instance_id   varchar(64) not null references process_instance(id) on delete cascade,
+  token_id      varchar(64) references execution_token(id) on delete set null,
+  type          varchar(16) not null check (type in ('TIMER','MESSAGE','SIGNAL','CONDITIONAL')),
+  event_name    varchar(255),
+  node_id       varchar(255),
+  configuration jsonb,
+  created_at    timestamptz not null default now()
+);
+create index ix_event_subscription_instance on event_subscription(instance_id);
+create index ix_event_subscription_type_name on event_subscription(type, event_name);
+
+create table external_task (
+  id             varchar(64) primary key,
+  instance_id    varchar(64) not null references process_instance(id) on delete cascade,
+  token_id       varchar(64) references execution_token(id) on delete set null,
+  topic          varchar(255) not null,
+  status         varchar(16) not null check (status in ('CREATED','LOCKED','COMPLETED','FAILED')),
+  worker_id      varchar(255),
+  lock_expiry_at timestamptz,
+  variables      jsonb,
+  created_at     timestamptz not null default now()
+);
+create index ix_external_task_topic_status on external_task(topic, status);
+create index ix_external_task_instance on external_task(instance_id);
+
+create table user_task (
+  id                varchar(64) primary key,
+  tenant_id         varchar(64) not null references tenant(id) on delete restrict,
+  instance_id       varchar(64) not null references process_instance(id) on delete cascade,
+  token_id          varchar(64) not null references execution_token(id) on delete cascade,
+  node_id           varchar(255) not null,
+  name              varchar(255),
+  assignee          varchar(255),
+  candidate_groups  varchar(255)[],
+  candidate_users   varchar(255)[],
+  delegated_to      varchar(255),
+  escalated_at      timestamptz,
+  due_date          timestamptz,
+  priority          integer not null default 50,
+  form_key          varchar(255),
+  submitted_data    jsonb,
+  claim_time        timestamptz,
+  completed         boolean not null default false,
+  created_at        timestamptz not null,
+  completed_at      timestamptz
+);
+create index ix_user_task_assignee on user_task(assignee) where completed = false;
+create index ix_user_task_instance on user_task(instance_id);
+
+create table token_variable (
+  id          varchar(64) primary key default gen_random_uuid()::text,
+  instance_id varchar(64) not null references process_instance(id) on delete cascade,
+  token_id    varchar(64) references execution_token(id) on delete set null,
+  name        varchar(255) not null,
+  scope       varchar(16) not null default 'INSTANCE' check (scope in ('INSTANCE','TOKEN','GLOBAL')),
+  type        varchar(16) not null check (type in ('STRING','LONG','DOUBLE','BOOLEAN','DATE','JSON','OBJECT','FILE')),
+  value_text  text,
+  value_json  jsonb,
+  revision    integer not null default 0,
+  updated_at  timestamptz not null default now(),
+  unique(instance_id, name)
+);
+
+create table token_variable_history (
+  id             varchar(64) not null default gen_random_uuid()::text,
+  variable_id    varchar(64) not null references token_variable(id) on delete cascade,
+  instance_id    varchar(64) not null,
+  name           varchar(255) not null,
+  type           varchar(16) not null,
+  old_value_text text,
+  old_value_json jsonb,
+  revision       integer not null,
+  changed_by     varchar(255),
+  changed_at     timestamptz not null default now(),
+  primary key (id, changed_at)
+) partition by range (changed_at);
+
+create table token_variable_history_2026_07 partition of token_variable_history for values from ('2026-07-01') to ('2026-08-01');
+create table token_variable_history_2026_08 partition of token_variable_history for values from ('2026-08-01') to ('2026-09-01');
+create table token_variable_history_2026_09 partition of token_variable_history for values from ('2026-09-01') to ('2026-10-01');
+create table token_variable_history_default partition of token_variable_history default;
+
+create index ix_tvh_instance_name on token_variable_history(instance_id, name);
+        ]]></sql>
+    </changeSet>
+
+    <!--
+      Trigger: UPDATE on token_variable auto-archives the old value + bumps revision (plan 25 §5).
+      splitStatements=false — $$...$$ function body contains semicolons that must not be split.
+    -->
+    <changeSet id="003-token-variable-trigger" author="bpms">
+        <sql splitStatements="false"><![CDATA[
+create or replace function fn_token_variable_history() returns trigger as $$
+begin
+    if OLD.value_text is distinct from NEW.value_text
+       or OLD.value_json is distinct from NEW.value_json then
+        insert into token_variable_history(
+            id, variable_id, instance_id, name, type,
+            old_value_text, old_value_json, revision, changed_by, changed_at)
+        values (
+            gen_random_uuid()::text, OLD.id, OLD.instance_id, OLD.name, OLD.type,
+            OLD.value_text, OLD.value_json, OLD.revision, NEW.updated_at::text, now());
+        NEW.revision := OLD.revision + 1;
+        NEW.updated_at := now();
+    end if;
+    return NEW;
+end;
+$$ language plpgsql;
+
+create trigger trg_token_variable_history
+    before update on token_variable
+    for each row execute function fn_token_variable_history();
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

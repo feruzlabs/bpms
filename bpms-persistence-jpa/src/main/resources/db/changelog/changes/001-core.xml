@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- v3 schema, group 1/4: tenant catalog, deployment, definition, instance root (plan 25). -->
+    <changeSet id="001-core" author="bpms">
+        <sql><![CDATA[
+create extension if not exists pgcrypto;
+
+create table tenant (
+  id         varchar(64) primary key,
+  code       varchar(32) not null unique,
+  name       varchar(255) not null,
+  status     varchar(16) not null default 'ACTIVE' check (status in ('ACTIVE','SUSPENDED')),
+  created_at timestamptz not null default now()
+);
+
+create table process_deployment (
+  id          varchar(64) primary key,
+  tenant_id   varchar(64) not null references tenant(id) on delete restrict,
+  name        varchar(255),
+  source      varchar(16) not null check (source in ('API','UI','MAVEN')),
+  deployed_at timestamptz not null default now(),
+  deployed_by varchar(255)
+);
+create index ix_process_deployment_tenant on process_deployment(tenant_id);
+
+create table process_deployment_resource (
+  id            varchar(64) primary key,
+  deployment_id varchar(64) not null references process_deployment(id) on delete cascade,
+  resource_name varchar(255) not null,
+  resource_type varchar(16) not null,
+  content       bytea not null,
+  created_at    timestamptz not null default now()
+);
+create index ix_deployment_resource_deployment on process_deployment_resource(deployment_id);
+
+create table process_definition (
+  id            varchar(64) primary key,
+  tenant_id     varchar(64) not null references tenant(id) on delete restrict,
+  deployment_id varchar(64) not null references process_deployment(id) on delete restrict,
+  process_key   varchar(255) not null,
+  name          varchar(255),
+  version       integer not null,
+  source_format varchar(32) not null,
+  bpmn_xml      text not null,
+  is_latest     boolean not null default true,
+  status        varchar(16) not null default 'ACTIVE' check (status in ('ACTIVE','SUSPENDED','DEPRECATED')),
+  created_at    timestamptz not null default now()
+);
+create unique index ix_process_definition_tenant_key_version on process_definition(tenant_id, process_key, version);
+create index ix_process_definition_deployment on process_definition(deployment_id);
+
+create table connector_definition (
+  id             varchar(64) primary key,
+  definition_id  varchar(64) not null references process_definition(id) on delete cascade,
+  connector_id   varchar(255) not null,
+  connector_type varchar(16) not null check (connector_type in ('HTTP','GRPC','KAFKA','INTERNAL')),
+  config         jsonb,
+  created_at     timestamptz not null default now()
+);
+create index ix_connector_definition_definition on connector_definition(definition_id);
+
+create table process_instance (
+  id                 varchar(64) primary key,
+  tenant_id          varchar(64) not null references tenant(id) on delete restrict,
+  definition_id      varchar(64) not null references process_definition(id) on delete restrict,
+  deployment_id      varchar(64) not null references process_deployment(id) on delete restrict,
+  business_key       varchar(255),
+  parent_instance_id varchar(64) references process_instance(id) on delete cascade,
+  root_instance_id   varchar(64) references process_instance(id) on delete set null,
+  status             varchar(16) not null check (status in ('RUNNING','SUSPENDED','COMPLETED','FAILED','TERMINATED','CANCELLED')),
+  created_at         timestamptz not null,
+  ended_at           timestamptz
+);
+create unique index ix_process_instance_tenant_business_key on process_instance(tenant_id, business_key);
+create index ix_process_instance_definition on process_instance(definition_id);
+create index ix_process_instance_parent on process_instance(parent_instance_id);
+
+create table process_instance_migration (
+  id                    varchar(64) primary key,
+  instance_id           varchar(64) not null references process_instance(id) on delete cascade,
+  source_definition_id  varchar(64) not null references process_definition(id) on delete restrict,
+  target_definition_id  varchar(64) not null references process_definition(id) on delete restrict,
+  mapping               jsonb not null,
+  migrated_at           timestamptz not null default now(),
+  migrated_by           varchar(255)
+);
+create index ix_instance_migration_instance on process_instance_migration(instance_id);
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

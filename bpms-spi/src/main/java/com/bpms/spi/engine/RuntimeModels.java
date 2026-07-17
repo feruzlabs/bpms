@@ -7,11 +7,11 @@ import java.util.Map;
 public final class RuntimeModels {
     private RuntimeModels() {}
 
-    public enum InstanceStatus { RUNNING, WAITING, COMPLETED, FAILED }
+    public enum InstanceStatus { RUNNING, WAITING, SUSPENDED, COMPLETED, FAILED, TERMINATED }
 
-    public enum TokenStatus { ACTIVE, WAITING, WAITING_JOB, COMPLETED, FAILED }
+    public enum TokenStatus { ACTIVE, WAITING, WAITING_JOB, COMPLETED, FAILED, CANCELED }
 
-    public enum JobStatus { PENDING, RUNNING, COMPLETED, FAILED }
+    public enum JobStatus { PENDING, RUNNING, COMPLETED, FAILED, CANCELED }
 
     public record DeployResult(String definitionId, String key, int version) {}
 

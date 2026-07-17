@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      v3 schema, group 2/4: token walk + step history + listener trace + diagnostics log (plan 23, plan 25).
+      incident_id columns WITHOUT FK here — circular dependency closed in 004-auth-stats.
+    -->
+    <changeSet id="002-execution" author="bpms">
+        <sql><![CDATA[
+create table execution_token (
+  id                       varchar(64) primary key,
+  instance_id              varchar(64) not null references process_instance(id) on delete cascade,
+  parent_token_id          varchar(64) references execution_token(id) on delete cascade,
+  current_node_id          varchar(255) not null,
+  status                   varchar(16) not null check (status in ('ACTIVE','WAITING','WAITING_JOB','COMPLETED','FAILED','CANCELED')),
+  parent_multi_instance_id varchar(64),
+  mi_total                 integer,
+  mi_completed             integer not null default 0,
+  mi_active                integer not null default 0,
+  incident_id              varchar(64),
+  created_at               timestamptz not null default now()
+);
+create index ix_execution_token_instance_status on execution_token(instance_id, status);
+create index ix_execution_token_parent on execution_token(parent_token_id);
+
+create table execution_token_state (
+  id            varchar(64) primary key default gen_random_uuid()::text,
+  token_id      varchar(64) not null references execution_token(id) on delete cascade,
+  instance_id   varchar(64) not null references process_instance(id) on delete cascade,
+  node_id       varchar(255) not null,
+  node_type     varchar(64),
+  sequence_no   integer not null,
+  status        varchar(16) not null check (status in ('ACTIVE','COMPLETED','FAILED','CANCELED')),
+  entered_at    timestamptz not null,
+  exited_at     timestamptz,
+  duration_ms   integer,
+  error_message text,
+  incident_id   varchar(64)
+);
+create unique index ix_ets_token_seq on execution_token_state(token_id, sequence_no);
+create index ix_ets_instance_node on execution_token_state(instance_id, node_id);
+
+create table execution_listener_log (
+  id              varchar(64) primary key default gen_random_uuid()::text,
+  token_state_id  varchar(64) not null references execution_token_state(id) on delete cascade,
+  instance_id     varchar(64) not null,
+  node_id         varchar(255),
+  phase           varchar(16) not null check (phase in ('BEFORE','AFTER','START','END','TAKE')),
+  listener_index  integer not null,
+  listener_type   varchar(24) not null check (listener_type in ('CLASS','EXPRESSION','DELEGATE_EXPRESSION')),
+  listener_ref    text,
+  status          varchar(16) not null check (status in ('SUCCESS','FAILED')),
+  started_at      timestamptz not null,
+  ended_at        timestamptz,
+  error_message   text
+);
+create index ix_listener_log_token_state on execution_listener_log(token_state_id);
+
+create table execution_log (
+  id           varchar(64) not null default gen_random_uuid()::text,
+  instance_id  varchar(64) not null references process_instance(id) on delete cascade,
+  token_id     varchar(64),
+  node_id      varchar(255),
+  node_type    varchar(64),
+  connector_id varchar(255),
+  event_type   varchar(32) not null,
+  status       varchar(32),
+  message      text,
+  details      jsonb,
+  duration_ms  integer,
+  created_at   timestamptz not null default now(),
+  primary key (id, created_at)
+) partition by range (created_at);
+
+create table execution_log_2026_07 partition of execution_log for values from ('2026-07-01') to ('2026-08-01');
+create table execution_log_2026_08 partition of execution_log for values from ('2026-08-01') to ('2026-09-01');
+create table execution_log_2026_09 partition of execution_log for values from ('2026-09-01') to ('2026-10-01');
+create table execution_log_default partition of execution_log default;
+
+create index ix_execution_log_instance on execution_log(instance_id, created_at);
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

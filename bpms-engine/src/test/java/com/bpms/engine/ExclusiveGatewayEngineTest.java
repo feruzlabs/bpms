@@ -143,5 +143,6 @@ class ExclusiveGatewayEngineTest {
         @Override public Optional<UserTaskRecord> findTaskById(String id) { return Optional.empty(); }
         @Override public JobRecord save(JobRecord job) { jobs.put(job.id(), job); return job; }
         @Override public Optional<JobRecord> findJobById(String id) { return Optional.ofNullable(jobs.get(id)); }
+        @Override public java.util.List<JobRecord> findPendingByInstance(String instanceId) { return java.util.List.of(); }
     }
 }

@@ -90,6 +90,41 @@ class ProcessInstanceController {
 }
 
 @RestController
+@RequestMapping("/api/v1/process-instances")
+class InstanceControlController {
+    private final com.bpms.server.service.InstanceLifecycleService lifecycle;
+
+    InstanceControlController(com.bpms.server.service.InstanceLifecycleService lifecycle) {
+        this.lifecycle = lifecycle;
+    }
+
+    @PostMapping("/{id}/suspend")
+    ResponseEntity<Void> suspend(
+            @PathVariable String id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User", required = false) String user) {
+        lifecycle.suspend(id, user, reason);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/resume")
+    ResponseEntity<Void> resume(@PathVariable String id) {
+        lifecycle.resume(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/terminate")
+    ResponseEntity<Void> terminate(
+            @PathVariable String id,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false, defaultValue = "false") boolean cascade,
+            @RequestHeader(value = "X-User", required = false) String user) {
+        lifecycle.terminate(id, user, reason, cascade);
+        return ResponseEntity.noContent().build();
+    }
+}
+
+@RestController
 @RequestMapping("/api/v1/tasks")
 class TaskController {
     private final ProcessEnginePort engine;

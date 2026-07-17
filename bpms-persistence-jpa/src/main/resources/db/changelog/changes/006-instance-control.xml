@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Task 27: manual TERMINATE/SUSPEND + runaway guardrail. -->
+    <changeSet id="006-instance-control" author="bpms">
+        <sql><![CDATA[
+-- who/why an instance was terminated (audit on the row itself, cheap to read)
+alter table process_instance add column if not exists terminated_by varchar(255);
+alter table process_instance add column if not exists cancel_reason  text;
+
+-- jobs can now be explicitly CANCELED by a terminate (ack-and-drop semantics)
+alter table job drop constraint if exists job_status_check;
+alter table job add constraint job_status_check
+  check (status in ('PENDING','LOCKED','RUNNING','COMPLETED','FAILED','RETRY','CANCELED'));
+
+-- runaway guardrail incident types (plan 27 §4)
+alter table incident drop constraint if exists incident_type_check;
+alter table incident add constraint incident_type_check
+  check (type in ('FAILED_JOB','ERROR_BOUNDARY','CONNECTOR_ERROR',
+                  'STEP_BUDGET_EXCEEDED','LOOP_DETECTED','SUBPROCESS_DEPTH_EXCEEDED','SPAWN_CAP_EXCEEDED'));
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

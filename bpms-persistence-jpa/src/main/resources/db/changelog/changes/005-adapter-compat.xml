@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Engine InstanceStatus.WAITING (user-task pause) — v3 CHECK missed it. -->
+    <changeSet id="005-instance-status-waiting" author="bpms">
+        <sql><![CDATA[
+alter table process_instance drop constraint if exists process_instance_status_check;
+alter table process_instance add constraint process_instance_status_check
+  check (status in ('RUNNING','WAITING','SUSPENDED','COMPLETED','FAILED','TERMINATED','CANCELLED'));
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

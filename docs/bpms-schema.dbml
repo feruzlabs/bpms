@@ -1,0 +1,415 @@
+// bpms-schema.dbml — v3 (25 tables, Camunda/Zeebe-style)
+// Renders at https://dbdiagram.io — paste this file's contents to get the ERD.
+// Source of truth for DDL: bpms-persistence-jpa/src/main/resources/db/changelog/changes/*.xml
+// Groups mirror the 4 Liquibase XML changesets: core / execution / jobs_events / auth_stats.
+
+Project bpms_new {
+  database_type: 'PostgreSQL'
+  note: 'New BPMN engine schema v3 — plan 25. Old bpms (Flyway) is a separate, untouched schema.'
+}
+
+//////////////////////////////////////////////////////////////////
+// GROUP 1 — CORE (changeset 001-core)
+//////////////////////////////////////////////////////////////////
+
+Table tenant {
+  id varchar(64) [pk]
+  code varchar(32) [not null, unique]
+  name varchar(255) [not null]
+  status varchar(16) [not null, default: 'ACTIVE', note: 'CHECK IN (ACTIVE,SUSPENDED)']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table process_deployment {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  name varchar(255)
+  source varchar(16) [not null, note: 'CHECK IN (API,UI,MAVEN)']
+  deployed_at timestamptz [not null, default: `now()`]
+  deployed_by varchar(255)
+}
+
+Table process_deployment_resource {
+  id varchar(64) [pk]
+  deployment_id varchar(64) [not null]
+  resource_name varchar(255) [not null]
+  resource_type varchar(16) [not null, note: 'BPMN/DMN/FORM — open, no CHECK']
+  content bytea [not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table process_definition {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  deployment_id varchar(64) [not null]
+  process_key varchar(255) [not null]
+  name varchar(255)
+  version integer [not null]
+  source_format varchar(32) [not null]
+  bpmn_xml text [not null]
+  is_latest boolean [not null, default: true]
+  status varchar(16) [not null, default: 'ACTIVE', note: 'CHECK IN (ACTIVE,SUSPENDED,DEPRECATED)']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (tenant_id, process_key, version) [unique]
+  }
+}
+
+Table connector_definition {
+  id varchar(64) [pk]
+  definition_id varchar(64) [not null]
+  connector_id varchar(255) [not null, note: '@Component bean name — must match BPMN connectorId']
+  connector_type varchar(16) [not null, note: 'CHECK IN (HTTP,GRPC,KAFKA,INTERNAL)']
+  config jsonb
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table process_instance {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  definition_id varchar(64) [not null]
+  deployment_id varchar(64) [not null]
+  business_key varchar(255)
+  parent_instance_id varchar(64) [note: 'subprocess/call-activity parent']
+  root_instance_id varchar(64) [note: 'top-most ancestor; navigation only']
+  status varchar(16) [not null, note: 'CHECK IN (RUNNING,SUSPENDED,COMPLETED,FAILED,TERMINATED,CANCELLED)']
+  created_at timestamptz [not null]
+  ended_at timestamptz
+
+  indexes {
+    (tenant_id, business_key) [unique]
+  }
+}
+
+Table process_instance_migration {
+  id varchar(64) [pk]
+  instance_id varchar(64) [not null]
+  source_definition_id varchar(64) [not null]
+  target_definition_id varchar(64) [not null]
+  mapping jsonb [not null, note: 'old nodeId -> new nodeId map']
+  migrated_at timestamptz [not null, default: `now()`]
+  migrated_by varchar(255)
+}
+
+//////////////////////////////////////////////////////////////////
+// GROUP 2 — EXECUTION (changeset 002-execution)
+//////////////////////////////////////////////////////////////////
+
+Table execution_token {
+  id varchar(64) [pk]
+  instance_id varchar(64) [not null]
+  parent_token_id varchar(64) [note: 'gateway-split parent token']
+  current_node_id varchar(255) [not null]
+  status varchar(16) [not null, note: 'CHECK IN (ACTIVE,WAITING,WAITING_JOB,COMPLETED,FAILED,CANCELED)']
+  parent_multi_instance_id varchar(64)
+  mi_total integer [note: 'multi-instance: total planned children']
+  mi_completed integer [not null, default: 0]
+  mi_active integer [not null, default: 0]
+  incident_id varchar(64) [note: 'FK added in changeset 004 (circular — see plan 25 §3)']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table execution_token_state {
+  id varchar(64) [pk]
+  token_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  node_id varchar(255) [not null]
+  node_type varchar(64) [note: 'open — no CHECK, too many BPMN element kinds']
+  sequence_no integer [not null, note: 'monotonic per token; loops revisit same node_id']
+  status varchar(16) [not null, note: 'CHECK IN (ACTIVE,COMPLETED,FAILED,CANCELED)']
+  entered_at timestamptz [not null]
+  exited_at timestamptz
+  duration_ms integer
+  error_message text
+  incident_id varchar(64) [note: 'FK added in changeset 004 (circular — see plan 25 §3)']
+
+  indexes {
+    (token_id, sequence_no) [unique]
+    (instance_id, node_id)
+  }
+}
+
+Table execution_listener_log {
+  id varchar(64) [pk]
+  token_state_id varchar(64) [not null]
+  instance_id varchar(64) [not null, note: 'denorm — join-free lookup']
+  node_id varchar(255) [note: 'denorm']
+  phase varchar(16) [not null, note: 'CHECK IN (BEFORE,AFTER,START,END,TAKE)']
+  listener_index integer [not null, note: 'order within same phase when a node has >1 listener']
+  listener_type varchar(24) [not null, note: 'CHECK IN (CLASS,EXPRESSION,DELEGATE_EXPRESSION)']
+  listener_ref text [note: 'class name or expression text']
+  status varchar(16) [not null, note: 'CHECK IN (SUCCESS,FAILED)']
+  started_at timestamptz [not null]
+  ended_at timestamptz
+  error_message text
+}
+
+Table execution_log {
+  id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  token_id varchar(64)
+  node_id varchar(255)
+  node_type varchar(64) [note: 'open — no CHECK']
+  connector_id varchar(255)
+  event_type varchar(32) [not null, note: 'open — no CHECK (CONNECTOR_START/END/ERROR, GATEWAY, TOKEN_FAILED, INSTANCE_END, ...)']
+  status varchar(32)
+  message text
+  details jsonb
+  duration_ms integer
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'PARTITION BY RANGE(created_at); PK is (id, created_at) — partition key must be in PK'
+}
+
+//////////////////////////////////////////////////////////////////
+// GROUP 3 — JOBS & EVENTS (changeset 003-jobs-events)
+//////////////////////////////////////////////////////////////////
+
+Table job {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  token_id varchar(64) [note: 'nullable — e.g. PROCESS_START jobs have no token yet']
+  type varchar(24) [not null, note: 'CHECK IN (SERVICE_TASK,TIMER,MESSAGE,ASYNC_JOB,PROCESS_START)']
+  payload jsonb
+  status varchar(16) [not null, note: 'CHECK IN (PENDING,LOCKED,RUNNING,COMPLETED,FAILED,RETRY)']
+  attempts integer [not null, default: 0]
+  max_attempts integer [not null, default: 5]
+  idempotency_key varchar(255) [unique, note: 'blocks duplicate at-least-once redelivery']
+  lock_expiry_at timestamptz [note: 'worker crash recovery']
+  due_date timestamptz [note: 'timer job trigger time']
+  repeat_cycle varchar(64) [note: 'ISO-8601 repeating interval, e.g. R3/PT10M']
+  remaining_repeats integer
+  run_at timestamptz [not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table dead_letter_job {
+  id varchar(64) [pk]
+  original_job_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  type varchar(24) [not null]
+  payload jsonb
+  attempts integer [not null]
+  error_message text
+  moved_at timestamptz [not null, default: `now()`]
+}
+
+Table event_subscription {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  token_id varchar(64)
+  type varchar(16) [not null, note: 'CHECK IN (TIMER,MESSAGE,SIGNAL,CONDITIONAL)']
+  event_name varchar(255)
+  node_id varchar(255)
+  configuration jsonb
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table external_task {
+  id varchar(64) [pk]
+  instance_id varchar(64) [not null]
+  token_id varchar(64)
+  topic varchar(255) [not null]
+  status varchar(16) [not null, note: 'CHECK IN (CREATED,LOCKED,COMPLETED,FAILED)']
+  worker_id varchar(255)
+  lock_expiry_at timestamptz
+  variables jsonb
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table user_task {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  token_id varchar(64) [not null]
+  node_id varchar(255) [not null]
+  name varchar(255)
+  assignee varchar(255)
+  candidate_groups varchar(255)[]
+  candidate_users varchar(255)[]
+  delegated_to varchar(255)
+  escalated_at timestamptz
+  due_date timestamptz
+  priority integer [not null, default: 50]
+  form_key varchar(255)
+  submitted_data jsonb
+  claim_time timestamptz
+  completed boolean [not null, default: false]
+  created_at timestamptz [not null]
+  completed_at timestamptz
+}
+
+Table token_variable {
+  id varchar(64) [pk, default: `gen_random_uuid()::text`]
+  instance_id varchar(64) [not null]
+  token_id varchar(64) [note: 'set when scope=TOKEN']
+  name varchar(255) [not null]
+  scope varchar(16) [not null, default: 'INSTANCE', note: 'CHECK IN (INSTANCE,TOKEN,GLOBAL)']
+  type varchar(16) [not null, note: 'CHECK IN (STRING,LONG,DOUBLE,BOOLEAN,DATE,JSON,OBJECT,FILE)']
+  value_text text
+  value_json jsonb
+  revision integer [not null, default: 0, note: 'auto-incremented by trg_token_variable_history']
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (instance_id, name) [unique]
+  }
+}
+
+Table token_variable_history {
+  id varchar(64) [not null, default: `gen_random_uuid()::text`]
+  variable_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  name varchar(255) [not null]
+  type varchar(16) [not null]
+  old_value_text text
+  old_value_json jsonb
+  revision integer [not null]
+  changed_by varchar(255)
+  changed_at timestamptz [not null, default: `now()`]
+
+  Note: 'PARTITION BY RANGE(changed_at); PK is (id, changed_at). Populated only by trg_token_variable_history.'
+}
+
+//////////////////////////////////////////////////////////////////
+// GROUP 4 — AUTH & STATS (changeset 004-auth-stats)
+//////////////////////////////////////////////////////////////////
+
+Table incident {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  instance_id varchar(64) [not null]
+  token_id varchar(64)
+  token_state_id varchar(64)
+  job_id varchar(64)
+  type varchar(24) [not null, note: 'CHECK IN (FAILED_JOB,ERROR_BOUNDARY,CONNECTOR_ERROR)']
+  severity varchar(16) [not null, default: 'ERROR', note: 'CHECK IN (INFO,WARNING,ERROR)']
+  status varchar(16) [not null, default: 'OPEN', note: 'CHECK IN (OPEN,RESOLVED,DELETED)']
+  message text
+  created_at timestamptz [not null, default: `now()`]
+  resolved_at timestamptz
+  resolved_by varchar(255)
+}
+
+Table group_entity {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  code varchar(64) [not null]
+  name varchar(255)
+
+  indexes {
+    (tenant_id, code) [unique]
+  }
+}
+
+Table process_authorization {
+  id varchar(64) [pk]
+  tenant_id varchar(64) [not null]
+  principal_type varchar(16) [not null, note: 'CHECK IN (USER,GROUP,ROLE)']
+  principal_id varchar(255) [not null]
+  resource_type varchar(32) [not null, note: "CHECK IN (PROCESS_DEFINITION,PROCESS_INSTANCE,USER_TASK)"]
+  resource_id varchar(255) [not null, note: "'*' = all resources of this type"]
+  permission varchar(16) [not null, note: 'CHECK IN (READ,START,UPDATE,DELETE,CLAIM)']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table process_comment {
+  id varchar(64) [pk]
+  instance_id varchar(64) [not null]
+  task_id varchar(64)
+  author varchar(255) [not null]
+  message text [not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table process_stats_daily {
+  id varchar(64) [pk]
+  definition_id varchar(64) [not null]
+  stat_date date [not null]
+  started_count integer [not null, default: 0]
+  completed_count integer [not null, default: 0]
+  failed_count integer [not null, default: 0]
+  avg_duration_ms integer
+  sla_breach_count integer [not null, default: 0]
+
+  indexes {
+    (definition_id, stat_date) [unique]
+  }
+}
+
+Table message_correlation {
+  id varchar(64) [pk]
+  instance_id varchar(64) [not null]
+  subscription_id varchar(64)
+  correlation_key varchar(255) [not null]
+  message_name varchar(255) [not null]
+  correlated_at timestamptz [not null, default: `now()`]
+}
+
+Table timer_definition {
+  id varchar(64) [pk]
+  definition_id varchar(64) [not null]
+  node_id varchar(255) [not null]
+  timer_type varchar(16) [not null, note: 'CHECK IN (DATE,DURATION,CYCLE)']
+  expression text [not null]
+}
+
+//////////////////////////////////////////////////////////////////
+// REFERENCES (FK, ON DELETE per plan 25 §1)
+//////////////////////////////////////////////////////////////////
+
+Ref: process_deployment.tenant_id > tenant.id [delete: restrict]
+Ref: process_deployment_resource.deployment_id > process_deployment.id [delete: cascade]
+Ref: process_definition.tenant_id > tenant.id [delete: restrict]
+Ref: process_definition.deployment_id > process_deployment.id [delete: restrict]
+Ref: connector_definition.definition_id > process_definition.id [delete: cascade]
+Ref: process_instance.tenant_id > tenant.id [delete: restrict]
+Ref: process_instance.definition_id > process_definition.id [delete: restrict]
+Ref: process_instance.deployment_id > process_deployment.id [delete: restrict]
+Ref: process_instance.parent_instance_id > process_instance.id [delete: cascade]
+Ref: process_instance.root_instance_id > process_instance.id [delete: set null]
+Ref: process_instance_migration.instance_id > process_instance.id [delete: cascade]
+Ref: process_instance_migration.source_definition_id > process_definition.id [delete: restrict]
+Ref: process_instance_migration.target_definition_id > process_definition.id [delete: restrict]
+
+Ref: execution_token.instance_id > process_instance.id [delete: cascade]
+Ref: execution_token.parent_token_id > execution_token.id [delete: cascade]
+Ref: execution_token.incident_id > incident.id [delete: set null]
+Ref: execution_token_state.token_id > execution_token.id [delete: cascade]
+Ref: execution_token_state.instance_id > process_instance.id [delete: cascade]
+Ref: execution_token_state.incident_id > incident.id [delete: set null]
+Ref: execution_listener_log.token_state_id > execution_token_state.id [delete: cascade]
+Ref: execution_log.instance_id > process_instance.id [delete: cascade]
+
+Ref: job.tenant_id > tenant.id [delete: restrict]
+Ref: job.instance_id > process_instance.id [delete: cascade]
+Ref: job.token_id > execution_token.id [delete: set null]
+Ref: dead_letter_job.instance_id > process_instance.id [delete: cascade]
+Ref: event_subscription.tenant_id > tenant.id [delete: restrict]
+Ref: event_subscription.instance_id > process_instance.id [delete: cascade]
+Ref: event_subscription.token_id > execution_token.id [delete: set null]
+Ref: external_task.instance_id > process_instance.id [delete: cascade]
+Ref: external_task.token_id > execution_token.id [delete: set null]
+Ref: user_task.tenant_id > tenant.id [delete: restrict]
+Ref: user_task.instance_id > process_instance.id [delete: cascade]
+Ref: user_task.token_id > execution_token.id [delete: cascade]
+Ref: token_variable.instance_id > process_instance.id [delete: cascade]
+Ref: token_variable.token_id > execution_token.id [delete: set null]
+Ref: token_variable_history.variable_id > token_variable.id [delete: cascade]
+
+Ref: incident.tenant_id > tenant.id [delete: restrict]
+Ref: incident.instance_id > process_instance.id [delete: cascade]
+Ref: incident.token_id > execution_token.id [delete: set null]
+Ref: incident.token_state_id > execution_token_state.id [delete: set null]
+Ref: incident.job_id > job.id [delete: set null]
+Ref: group_entity.tenant_id > tenant.id [delete: restrict]
+Ref: process_authorization.tenant_id > tenant.id [delete: restrict]
+Ref: process_comment.instance_id > process_instance.id [delete: cascade]
+Ref: process_comment.task_id > user_task.id [delete: set null]
+Ref: process_stats_daily.definition_id > process_definition.id [delete: cascade]
+Ref: message_correlation.instance_id > process_instance.id [delete: cascade]
+Ref: message_correlation.subscription_id > event_subscription.id [delete: set null]
+Ref: timer_definition.definition_id > process_definition.id [delete: cascade]
