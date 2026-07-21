@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  regional_vacation_bestpractice.bpmn
+  ============================================================================
+  `processes/regional_vacation.bpmn` ning BEST-PRACTICE refactor namunasi (ADR-001).
+  O'ZGARISH: inline `camunda:executionListener` + `camunda:script` (js) + `bpms.*` chaqiruvlari
+  EXPLICIT `serviceTask` + `camunda:connector` ga ko'chirildi. Endi har side-effect (HRMS state,
+  hujjat generatsiyasi, HTTP) modelda KO'RINADI, mustaqil test qilinadi, retry/incident bilan ishonchli,
+  va JS-runtime + butun `bpms.*` API SHART EMAS.
+  Ifodalar standart `${...}` (JUEL) uslubida. BPMNDI (diagramma koordinatalari) qo'shilmagan —
+  modeler (Camunda Modeler) ochilganda avto-layout qiladi.
+  Oqim regional_vacation.bpmn ga sodiq: ketma-ket approval, har bosqichda sign yo'q -> reject -> terminate.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  id="Definitions_regional_vacation_bp">
+  <bpmn:process id="regional_vacation_bp" name="Regional vacation (best-practice)" isExecutable="true"
+                camunda:versionTag="bp-1">
+
+    <!-- START: initiator + start form (o'zgarishsiz best-practice) -->
+    <bpmn:startEvent id="Start" name="Vacation request" camunda:initiator="starterUser">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="employee" label="Employee" type="string"><camunda:validation><camunda:constraint name="required"/></camunda:validation></camunda:formField>
+          <camunda:formField id="startDate" label="Start date" type="date"><camunda:validation><camunda:constraint name="required"/></camunda:validation></camunda:formField>
+          <camunda:formField id="is_interfere_you" label="Has substitute" type="boolean" defaultValue="false"/>
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>f_init</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- Init: eski 'Initialize' manualTask start/end skriptlari (setValueObject task_expired_date) -> serviceTask -->
+    <bpmn:serviceTask id="Init" name="Initialize process">
+      <bpmn:extensionElements>
+        <camunda:connector>
+          <camunda:connectorId>ProcessInitConnector</camunda:connectorId>
+          <camunda:inputOutput>
+            <camunda:inputParameter name="startDate">${startDate}</camunda:inputParameter>
+            <camunda:outputParameter name="TASK_EXPIRED_DATE">${response.expiredDate}</camunda:outputParameter>
+          </camunda:inputOutput>
+        </camunda:connector>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_init</bpmn:incoming>
+      <bpmn:outgoing>f_setEmp</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- ===== EMPLOYEE ===== eski: userTask start-listener startLineStateStatus + generateFile -->
+    <bpmn:serviceTask id="SetEmp" name="HRMS: start ON_EMPLOYEE">
+      <bpmn:extensionElements>
+        <camunda:connector>
+          <camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+          <camunda:inputOutput>
+            <camunda:inputParameter name="state">ON_EMPLOYEE</camunda:inputParameter>
+            <camunda:inputParameter name="phase">START</camunda:inputParameter>
+          </camunda:inputOutput>
+        </camunda:connector>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_setEmp</bpmn:incoming>
+      <bpmn:outgoing>f_empTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:userTask id="EmployeeTask" name="Hodimda" camunda:formKey="regional_vacation_employee_form"
+                   camunda:assignee="${employee.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}" camunda:priority="1">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="regional_vacation_employee_sign" label="Sign" type="string"/>
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_empTask</bpmn:incoming>
+      <bpmn:outgoing>f_empGw</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="EmpGw" name="Signed?">
+      <bpmn:incoming>f_empGw</bpmn:incoming>
+      <bpmn:outgoing>f_empReject</bpmn:outgoing>
+      <bpmn:outgoing>f_empOk</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_empReject" sourceRef="EmpGw" targetRef="FailEmp">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_employee_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_empOk" sourceRef="EmpGw" targetRef="CompleteEmp"/> <!-- shartsiz = default -->
+
+    <!-- reject: eski manualTask 'Reject' failLineStateStatus -> serviceTask -->
+    <bpmn:serviceTask id="FailEmp" name="HRMS: fail ON_EMPLOYEE">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_EMPLOYEE</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_empReject</bpmn:incoming><bpmn:outgoing>f_empTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectEmp" name="Rejected (employee)">
+      <bpmn:incoming>f_empTerm</bpmn:incoming><bpmn:terminateEventDefinition/>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_empTerm" sourceRef="FailEmp" targetRef="EndRejectEmp"/>
+
+    <bpmn:serviceTask id="CompleteEmp" name="HRMS: complete ON_EMPLOYEE">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_EMPLOYEE</camunda:inputParameter>
+        <camunda:inputParameter name="phase">COMPLETE</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_empOk</bpmn:incoming><bpmn:outgoing>f_appDoc</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- eski 'Application Sign' manualTask (labour.generateFile + http.postRequest) -> serviceTask -->
+    <bpmn:serviceTask id="AppDoc" name="Generate application document">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>LabourDocConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="docType">APPLICATION</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_appDoc</bpmn:incoming><bpmn:outgoing>f_interGw</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- ===== INTERFERE (substitute) ===== -->
+    <bpmn:exclusiveGateway id="InterGw" name="Has substitute?">
+      <bpmn:incoming>f_interGw</bpmn:incoming>
+      <bpmn:outgoing>f_interYes</bpmn:outgoing>
+      <bpmn:outgoing>f_interNo</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_interYes" sourceRef="InterGw" targetRef="SetInter">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${is_interfere_you == true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_interNo" sourceRef="InterGw" targetRef="BscInit"/>
+
+    <bpmn:serviceTask id="SetInter" name="HRMS: start ON_INTERFERE">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_INTERFERE_EMPLOYEE</camunda:inputParameter>
+        <camunda:inputParameter name="phase">START</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_interYes</bpmn:incoming><bpmn:outgoing>f_interTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="InterfereTask" name="Vaqtinchalik o'rinbosarda" camunda:formKey="regional_vacation_interfere_form"
+                   camunda:assignee="${interfere_employee.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_interfere_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_interTask</bpmn:incoming><bpmn:outgoing>f_interSignGw</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="InterSignGw" name="Signed?">
+      <bpmn:incoming>f_interSignGw</bpmn:incoming><bpmn:outgoing>f_interReject</bpmn:outgoing><bpmn:outgoing>f_interOk</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_interReject" sourceRef="InterSignGw" targetRef="FailInter">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_interfere_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_interOk" sourceRef="InterSignGw" targetRef="BscInit"/>
+    <bpmn:serviceTask id="FailInter" name="HRMS: fail ON_INTERFERE">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_INTERFERE_EMPLOYEE</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_interReject</bpmn:incoming><bpmn:outgoing>f_interTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectInter" name="Rejected (substitute)"><bpmn:incoming>f_interTerm</bpmn:incoming><bpmn:terminateEventDefinition/></bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_interTerm" sourceRef="FailInter" targetRef="EndRejectInter"/>
+
+    <!-- ===== BSC (branch: regional deputy vs BXM head) ===== -->
+    <bpmn:serviceTask id="BscInit" name="HRMS: start BSC">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_BSC</camunda:inputParameter>
+        <camunda:inputParameter name="phase">START</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_interNo</bpmn:incoming><bpmn:incoming>f_interOk</bpmn:incoming><bpmn:outgoing>f_bscGw</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="BscGw" name="Responsibility rating">
+      <bpmn:incoming>f_bscGw</bpmn:incoming><bpmn:outgoing>f_bscDeputy</bpmn:outgoing><bpmn:outgoing>f_bscHead</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_bscDeputy" sourceRef="BscGw" targetRef="RegionalDeputyTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${bsc_director.responsibilityRating == 5500}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_bscHead" sourceRef="BscGw" targetRef="BscHeadTask"/>
+
+    <bpmn:userTask id="RegionalDeputyTask" name="Mintaqa zami" camunda:formKey="regional_vacation_bsc_head_form"
+                   camunda:assignee="${bsc_director.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_bsc_head_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_bscDeputy</bpmn:incoming><bpmn:outgoing>f_bscJoin1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="BscHeadTask" name="BXM boshligida" camunda:formKey="regional_vacation_bsc_head_form"
+                   camunda:assignee="${bsc_director.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_bsc_head_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_bscHead</bpmn:incoming><bpmn:outgoing>f_bscJoin2</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="BscSignGw" name="Signed?">
+      <bpmn:incoming>f_bscJoin1</bpmn:incoming><bpmn:incoming>f_bscJoin2</bpmn:incoming>
+      <bpmn:outgoing>f_bscReject</bpmn:outgoing><bpmn:outgoing>f_bscOk</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_bscReject" sourceRef="BscSignGw" targetRef="FailBsc">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_bsc_head_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_bscOk" sourceRef="BscSignGw" targetRef="SetHr"/>
+    <bpmn:serviceTask id="FailBsc" name="HRMS: fail BSC">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_BSC</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_bscReject</bpmn:incoming><bpmn:outgoing>f_bscTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectBsc" name="Rejected (BSC)"><bpmn:incoming>f_bscTerm</bpmn:incoming><bpmn:terminateEventDefinition/></bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_bscTerm" sourceRef="FailBsc" targetRef="EndRejectBsc"/>
+
+    <!-- ===== HR ===== -->
+    <bpmn:serviceTask id="SetHr" name="HRMS: start ON_HR">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_HR</camunda:inputParameter>
+        <camunda:inputParameter name="phase">START</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_bscOk</bpmn:incoming><bpmn:outgoing>f_hrTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="HrTask" name="Kadrda" camunda:formKey="regional_vacation_hr_head_form"
+                   camunda:assignee="${hr_head.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_hr_head_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_hrTask</bpmn:incoming><bpmn:outgoing>f_hrGw</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="HrGw" name="Signed?"><bpmn:incoming>f_hrGw</bpmn:incoming><bpmn:outgoing>f_hrReject</bpmn:outgoing><bpmn:outgoing>f_hrOk</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_hrReject" sourceRef="HrGw" targetRef="FailHr">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_hr_head_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_hrOk" sourceRef="HrGw" targetRef="SetLawyer"/>
+    <bpmn:serviceTask id="FailHr" name="HRMS: fail ON_HR">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_HR</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_hrReject</bpmn:incoming><bpmn:outgoing>f_hrTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectHr" name="Rejected (HR)"><bpmn:incoming>f_hrTerm</bpmn:incoming><bpmn:terminateEventDefinition/></bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_hrTerm" sourceRef="FailHr" targetRef="EndRejectHr"/>
+
+    <!-- ===== LAWYER ===== -->
+    <bpmn:serviceTask id="SetLawyer" name="HRMS: start ON_LAWYER">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_LAWYER</camunda:inputParameter>
+        <camunda:inputParameter name="phase">START</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_hrOk</bpmn:incoming><bpmn:outgoing>f_lawTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="LawyerTask" name="Yuristda" camunda:formKey="regional_vacation_lawyer_form"
+                   camunda:assignee="${law_head.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_lawyer_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_lawTask</bpmn:incoming><bpmn:outgoing>f_lawGw</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="LawGw" name="Signed?"><bpmn:incoming>f_lawGw</bpmn:incoming><bpmn:outgoing>f_lawReject</bpmn:outgoing><bpmn:outgoing>f_lawOk</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_lawReject" sourceRef="LawGw" targetRef="FailLaw">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_lawyer_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_lawOk" sourceRef="LawGw" targetRef="SetCenter"/>
+    <bpmn:serviceTask id="FailLaw" name="HRMS: fail ON_LAWYER">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_LAWYER</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_lawReject</bpmn:incoming><bpmn:outgoing>f_lawTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectLaw" name="Rejected (lawyer)"><bpmn:incoming>f_lawTerm</bpmn:incoming><bpmn:terminateEventDefinition/></bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_lawTerm" sourceRef="FailLaw" targetRef="EndRejectLaw"/>
+
+    <!-- ===== CENTER HEAD ===== -->
+    <bpmn:serviceTask id="SetCenter" name="HRMS: start ON_CENTER">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_CENTER</camunda:inputParameter>
+        <camunda:inputParameter name="phase">START</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_lawOk</bpmn:incoming><bpmn:outgoing>f_centerTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="CenterHeadTask" name="Mintaqaviy markaz boshligida" camunda:formKey="regional_vacation_center_head_form"
+                   camunda:assignee="${chairman.empId}" camunda:dueDate="${TASK_EXPIRED_DATE}">
+      <bpmn:extensionElements><camunda:formData><camunda:formField id="regional_vacation_center_head_sign" label="Sign" type="string"/></camunda:formData></bpmn:extensionElements>
+      <bpmn:incoming>f_centerTask</bpmn:incoming><bpmn:outgoing>f_centerGw</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="CenterGw" name="Signed?"><bpmn:incoming>f_centerGw</bpmn:incoming><bpmn:outgoing>f_centerReject</bpmn:outgoing><bpmn:outgoing>f_centerOk</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_centerReject" sourceRef="CenterGw" targetRef="FailCenter">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${regional_vacation_center_head_sign == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_centerOk" sourceRef="CenterGw" targetRef="OrderSign"/>
+    <bpmn:serviceTask id="FailCenter" name="HRMS: fail ON_CENTER">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">ON_CENTER</camunda:inputParameter>
+        <camunda:inputParameter name="phase">FAIL</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_centerReject</bpmn:incoming><bpmn:outgoing>f_centerTerm</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndRejectCenter" name="Rejected (center)"><bpmn:incoming>f_centerTerm</bpmn:incoming><bpmn:terminateEventDefinition/></bpmn:endEvent>
+    <bpmn:sequenceFlow id="f_centerTerm" sourceRef="FailCenter" targetRef="EndRejectCenter"/>
+
+    <!-- ===== FINALIZE ===== eski 'Order Sign' + 'Registration Code' (http.postRequest) + 'Complete' (generateFile) -->
+    <bpmn:serviceTask id="OrderSign" name="Generate order document">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>LabourDocConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="docType">ORDER</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_centerOk</bpmn:incoming><bpmn:outgoing>f_reg</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Registration" name="Register in HRMS">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsRegistrationConnector</camunda:connectorId>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="businessKey">${hrms_business_key}</camunda:inputParameter>
+          <camunda:outputParameter name="registration_code">${response.code}</camunda:outputParameter>
+        </camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_reg</bpmn:incoming><bpmn:outgoing>f_complete</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CompleteState" name="HRMS: complete process">
+      <bpmn:extensionElements><camunda:connector><camunda:connectorId>HrmsStateConnector</camunda:connectorId>
+        <camunda:inputOutput><camunda:inputParameter name="state">COMPLETED</camunda:inputParameter>
+        <camunda:inputParameter name="phase">COMPLETE</camunda:inputParameter></camunda:inputOutput></camunda:connector></bpmn:extensionElements>
+      <bpmn:incoming>f_complete</bpmn:incoming><bpmn:outgoing>f_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndApproved" name="Approved"><bpmn:incoming>f_end</bpmn:incoming></bpmn:endEvent>
+
+    <!-- ===== sequence flows (asosiy zanjir) ===== -->
+    <bpmn:sequenceFlow id="f_init" sourceRef="Start" targetRef="Init"/>
+    <bpmn:sequenceFlow id="f_setEmp" sourceRef="Init" targetRef="SetEmp"/>
+    <bpmn:sequenceFlow id="f_empTask" sourceRef="SetEmp" targetRef="EmployeeTask"/>
+    <bpmn:sequenceFlow id="f_empGw" sourceRef="EmployeeTask" targetRef="EmpGw"/>
+    <bpmn:sequenceFlow id="f_appDoc" sourceRef="CompleteEmp" targetRef="AppDoc"/>
+    <bpmn:sequenceFlow id="f_interGw" sourceRef="AppDoc" targetRef="InterGw"/>
+    <bpmn:sequenceFlow id="f_interTask" sourceRef="SetInter" targetRef="InterfereTask"/>
+    <bpmn:sequenceFlow id="f_interSignGw" sourceRef="InterfereTask" targetRef="InterSignGw"/>
+    <bpmn:sequenceFlow id="f_bscGw" sourceRef="BscInit" targetRef="BscGw"/>
+    <bpmn:sequenceFlow id="f_bscJoin1" sourceRef="RegionalDeputyTask" targetRef="BscSignGw"/>
+    <bpmn:sequenceFlow id="f_bscJoin2" sourceRef="BscHeadTask" targetRef="BscSignGw"/>
+    <bpmn:sequenceFlow id="f_hrTask" sourceRef="SetHr" targetRef="HrTask"/>
+    <bpmn:sequenceFlow id="f_hrGw" sourceRef="HrTask" targetRef="HrGw"/>
+    <bpmn:sequenceFlow id="f_lawTask" sourceRef="SetLawyer" targetRef="LawyerTask"/>
+    <bpmn:sequenceFlow id="f_lawGw" sourceRef="LawyerTask" targetRef="LawGw"/>
+    <bpmn:sequenceFlow id="f_centerTask" sourceRef="SetCenter" targetRef="CenterHeadTask"/>
+    <bpmn:sequenceFlow id="f_centerGw" sourceRef="CenterHeadTask" targetRef="CenterGw"/>
+    <bpmn:sequenceFlow id="f_reg" sourceRef="OrderSign" targetRef="Registration"/>
+    <bpmn:sequenceFlow id="f_complete" sourceRef="Registration" targetRef="CompleteState"/>
+    <bpmn:sequenceFlow id="f_end" sourceRef="CompleteState" targetRef="EndApproved"/>
+
+  </bpmn:process>
+</bpmn:definitions>
