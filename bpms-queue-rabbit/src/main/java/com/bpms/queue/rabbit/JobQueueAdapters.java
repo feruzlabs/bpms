@@ -22,7 +22,7 @@ public class JobQueueAdapters {
     @ConditionalOnProperty(name = "bpms.job-queue", havingValue = "in-process", matchIfMissing = true)
     JobQueuePort inProcessJobQueuePort(JobQueuePort.JobHandler handler) {
         // JobDispatcher is @Primary — routes PROCESS_START / SERVICE_TASK
-        return job -> handler.handle(job);
+        return handler::handle;
     }
 
     @Configuration

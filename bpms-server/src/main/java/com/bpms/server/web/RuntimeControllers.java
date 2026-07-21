@@ -152,4 +152,9 @@ class RuntimeErrorHandler {
     ResponseEntity<?> invalid(RuntimeException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
     }
+
+    @ExceptionHandler(com.bpms.server.service.StartFormValidationException.class)
+    ResponseEntity<?> startFormInvalid(com.bpms.server.service.StartFormValidationException e) {
+        return ResponseEntity.unprocessableEntity().body(Map.of("errors", e.errors()));
+    }
 }

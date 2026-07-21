@@ -10,5 +10,6 @@
         <dependency><groupId>com.github.ben-manes.caffeine</groupId><artifactId>caffeine</artifactId></dependency>
         <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>com.bpms</groupId><artifactId>bpms-parser-camunda</artifactId><scope>test</scope></dependency>
     </dependencies>
 </project>

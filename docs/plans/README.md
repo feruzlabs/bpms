@@ -28,13 +28,27 @@
 | 18 | `18-port-creditconveyer-v9.md` | creditConveyer **v9** connectorlarini ko'chirish (SPI) | ✅ (20 kengaytirdi) |
 | 19 | `19-db-execution-log.md` | Ijro logini bazaga yozish (execution_log + ExecutionLogPort) | 🔧 qisman |
 | 20 | `20-import-v8-v9-connectors.md` | **v6/v7 + v8 + v9** barcha connector/servis importi + real test sxemalar (4888/6004/7000) | ✅ import+test |
-| 21 | `21-async-process-start.md` | START'ni async qilish (DB → RabbitMQ → consumer) | 📝 kutilmoqda |
+| 21 | `21-async-process-start.md` | START'ni async qilish (DB → RabbitMQ → consumer) | 📝 tekshirilsin |
+| 22 | `22-fix-gateway-unconditional-flow.md` | Exclusive/inclusive gateway: shartsiz chiquvchi flow implicit default (merge gateway fix) | 📝 kutilmoqda |
+| 23 | `23-execution-token-state-model.md` | `execution_token_history` → `execution_token_state` + listener trace (BEFORE/AFTER execute) | 📝 kutilmoqda |
+| 24 | `24-flyway-to-liquibase-migration.md` | Flyway → Liquibase (amalda **XML** changelog qilib bajarildi) | ✅ bajarilgan |
+| 25 | `25-schema-v3-ddl-migrations.md` | v3 sxema (~29 jadval) DDL + FK/CHECK/partition/trigger/seed | ✅ implement (`changes/001-004.xml`) |
+| 26 | `26-features-documentation.md` | `FEATURES.md` — sxema qaysi biznes-feature'larni yoqadi (A–L) | ✅ `docs/FEATURES.md` bor |
+| 27 | `27-instance-terminate-and-runaway-guard.md` | Instance TERMINATE + recursive/loop guardrail (step-budjet, cooperative cancel) | 📝 kutilmoqda |
+| 28 | `28-timer-message-signal-events.md` | Timer/Message/Signal event (P0: intermediate timer catch `timeDuration` — real polling loop) | 📝 kutilmoqda |
+| 29 | `29-dod-gap-close.md` | 22/25/27 DoD bo'shliqlarini yopish (test + node-revisit guard verify + README) | 📝 kutilmoqda |
+| 30 | `30-start-form-validation-business-key.md` | Start-forma validatsiyasi + business key (21 §2.1); 10/10 korpus sxema ishlatadi | ✅ bajarilgan |
 
 ## Tavsiya yo'l xaritasi (roadmap)
 1. **Arxitektura:** 11 → 12/13 (vizyon) → 14 (compat).
 2. **Ishga tushirish:** 15 (docker/persistence/deploy/execute/start) → 16 (EAV fix) → 17 (cache) → 19 (log).
 3. **Domen:** 18 → 20 (v6/v7/v8/v9 connectorlar) — real protseslarni sinash.
-4. **Async/ishlab chiqarish:** 21 (async start) → (keyingi: outbox poller, timer/message event, catalog/validate API, shadow-run parity).
+4. **Persistence/model:** 24 (Liquibase) → 25 (v3 DDL) → 26 (FEATURES) — ✅ bajarilgan.
+5. **Async/engine to'g'riligi:** 21 (async start parity, tekshirilsin) → 22 (gateway shartsiz-flow, yuqori ustuvorlik) → 23 (token_state + listener trace).
+6. **Event'lar:** 28 (timer/message/signal — P0 timer real korpus polling'i uchun majburiy).
+7. **DoD tozalash:** 29 (22/25/27 bo'shliqlari + README).
+8. **Korpus to'liq ishlashi:** 30 (start-forma + business key) → **22+28+30 bilan 4888/6004/7000 end-to-end yuradi** (katta bosqich).
+9. **Keyingi:** outbox poller, request-scoped multi-tenancy, call-activity (27 spawn-guard'ni ochadi), boundary event, catalog/validate API, shadow-run parity.
 
 ## Test sxemalari (compat-corpus)
 - `TUNE_CREDIT_REQUEST_4888` — V6/V7 · `TUNE_CREDIT_REQUEST_6004` — V8 · `TUNE_CREDIT_REQUEST_7000` — V8+V9.

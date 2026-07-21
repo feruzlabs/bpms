@@ -2,6 +2,7 @@ package com.bpms.server.service;
 
 import com.bpms.core.definition.FlowNode;
 import com.bpms.core.definition.ParseResult;
+import com.bpms.core.definition.FormDataSpec;
 import com.bpms.core.definition.ProcessDefinition;
 import com.bpms.core.definition.SequenceFlow;
 import com.bpms.core.definition.StartEventNode;
@@ -35,10 +36,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.NoSuchElementException;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @Transactional
@@ -110,9 +108,7 @@ public class ProcessEngineService implements ProcessEnginePort {
                 .or(() -> definitions.findLatestByKey(ref))
                 .orElseThrow(() -> new NoSuchElementException("Definition not found: " + ref));
         ProcessDefinition model = registry.get(d.id());
-        Map<String, Object> values = input == null ? Map.of() : input;
-
-        validateStartForm(model, values);
+        Map<String, Object> values = StartFormValidator.validateAndCoerce(model, input);
         String bk = resolveBusinessKey(model, values, businessKey);
 
         String iid = UUID.randomUUID().toString();
@@ -153,47 +149,29 @@ public class ProcessEngineService implements ProcessEnginePort {
     }
 
     /**
-     * Start-form validation (plan 14 forms module). Skip when no form / no validators yet.
-     */
-    private void validateStartForm(ProcessDefinition model, Map<String, Object> values) {
-        StartEventNode start = model.nodes().stream()
-                .filter(StartEventNode.class::isInstance)
-                .map(StartEventNode.class::cast)
-                .findFirst()
-                .orElse(null);
-        if (start == null || start.formData().isEmpty() || start.formData().get().fields().isEmpty()) {
-            return;
-        }
-        // Full ValidationService parity lands with forms module; fields present → accept for now.
-    }
-
-    /**
-     * Prefer request businessKey; else form {@code businessProcessKeyVar} from process metadata
-     * (until Form entity is ported). TUNE heuristic: {@code request_id_*_start_form}.
+     * Business key resolution (plan 30 §4, old BpmExecutionService parity):
+     * when start form declares {@code businessKeyVar} and input contains it → use that value;
+     * otherwise fall back to request {@code businessKey}.
      */
     static String resolveBusinessKey(ProcessDefinition model, Map<String, Object> values, String requestBk) {
+        Optional<FormDataSpec> formOpt = StartFormValidator.startForm(model);
+        if (formOpt.isPresent()) {
+            String bkVar = formOpt.get().businessKeyVar();
+            if (bkVar != null && !bkVar.isBlank()) {
+                if (values != null && values.containsKey(bkVar)) {
+                    Object v = values.get(bkVar);
+                    if (v != null && !String.valueOf(v).isBlank()) {
+                        return String.valueOf(v);
+                    }
+                }
+                throw new StartFormValidationException(List.of(
+                        new StartFormValidationException.FieldError(bkVar, "required")));
+            }
+        }
         if (requestBk != null && !requestBk.isBlank()) {
             return requestBk;
         }
-        Object fromMeta = model.metadata() != null ? model.metadata().get("businessProcessKeyVar") : null;
-        if (fromMeta != null && values != null) {
-            Object v = values.get(String.valueOf(fromMeta));
-            if (v != null && !String.valueOf(v).isBlank()) {
-                return String.valueOf(v);
-            }
-        }
-        if (values != null) {
-            for (var e : values.entrySet()) {
-                if (e.getKey() != null
-                        && e.getKey().startsWith("request_id_")
-                        && e.getKey().endsWith("_start_form")
-                        && e.getValue() != null
-                        && !String.valueOf(e.getValue()).isBlank()) {
-                    return String.valueOf(e.getValue());
-                }
-            }
-        }
-        return requestBk;
+        return null;
     }
 
     @Override

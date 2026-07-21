@@ -1,6 +1,9 @@
 package com.bpms.server.service;
 
+import com.bpms.core.definition.FormDataSpec;
+import com.bpms.core.definition.FormFieldSpec;
 import com.bpms.core.definition.ProcessDefinition;
+import com.bpms.core.definition.StartEventNode;
 import com.bpms.spi.engine.RuntimeModels.JobRecord;
 import com.bpms.spi.engine.RuntimeModels.JobStatus;
 import com.bpms.spi.port.InstanceControlPort;
@@ -22,33 +25,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ProcessStartAsyncTest {
 
     @Test
-    void resolveBusinessKeyPrefersRequest() {
-        ProcessDefinition model = emptyModel();
+    void resolveBusinessKeyUsesFormFieldWhenBusinessKeyVarSet() {
+        ProcessDefinition model = tuneModelWithBkVar("my_bk_field");
         String bk = ProcessEngineService.resolveBusinessKey(
-                model,
-                Map.of("request_id_tune_credit_request_start_form", "from-form"),
-                "from-request");
-        assertEquals("from-request", bk);
+                model, Map.of("my_bk_field", "BK-FORM"), "BK-HTTP");
+        assertEquals("BK-FORM", bk);
     }
 
     @Test
-    void resolveBusinessKeyFallsBackToTuneRequestIdFormVar() {
+    void resolveBusinessKeyFallsBackToRequestWhenNoBusinessKeyVar() {
         ProcessDefinition model = emptyModel();
         String bk = ProcessEngineService.resolveBusinessKey(
-                model,
-                Map.of("request_id_tune_credit_request_start_form", "REQ-99"),
-                null);
-        assertEquals("REQ-99", bk);
-    }
-
-    @Test
-    void resolveBusinessKeyUsesMetadataVarName() {
-        ProcessDefinition model = new ProcessDefinition(
-                "p", "p", "p", List.of(), List.of(), List.of(), List.of(),
-                Map.of("businessProcessKeyVar", "my_bk_field"));
-        String bk = ProcessEngineService.resolveBusinessKey(
-                model, Map.of("my_bk_field", "BK-1"), "  ");
-        assertEquals("BK-1", bk);
+                model, Map.of("request_id_tune_credit_request_start_form", "REQ-99"), "BK-HTTP");
+        assertEquals("BK-HTTP", bk);
     }
 
     @Test
@@ -165,5 +154,16 @@ class ProcessStartAsyncTest {
     private static ProcessDefinition emptyModel() {
         return new ProcessDefinition(
                 "p", "p", "p", List.of(), List.of(), List.of(), List.of(), Map.of());
+    }
+
+    private static ProcessDefinition tuneModelWithBkVar(String bkVar) {
+        return new ProcessDefinition(
+                "p", "p", "p",
+                List.of(new StartEventNode("start", null, Optional.empty(),
+                        Optional.of(new FormDataSpec("form", bkVar, List.of(
+                                new FormFieldSpec(bkVar, null, "string", null, false, Map.of(), Map.of(), List.of())
+                        ))),
+                        Optional.empty(), List.of())),
+                List.of(), List.of(), List.of(), Map.of());
     }
 }

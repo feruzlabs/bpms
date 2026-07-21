@@ -7,6 +7,8 @@ import com.bpms.core.definition.ListenerImplKind;
 import com.bpms.core.definition.ListenerKind;
 import com.bpms.core.definition.ListenerSpec;
 import org.camunda.bpm.model.bpmn.instance.BaseElement;
+import org.camunda.bpm.model.bpmn.instance.StartEvent;
+import org.camunda.bpm.model.bpmn.instance.UserTask;
 import org.camunda.bpm.model.bpmn.instance.camunda.CamundaConstraint;
 import org.camunda.bpm.model.bpmn.instance.camunda.CamundaExecutionListener;
 import org.camunda.bpm.model.bpmn.instance.camunda.CamundaFormData;
@@ -44,7 +46,38 @@ final class ExtensionReader {
         for (CamundaFormField field : formData.getCamundaFormFields()) {
             fields.add(mapField(field));
         }
-        return Optional.of(new FormDataSpec(List.copyOf(fields)));
+        String formKey = null;
+        String businessKeyVar = null;
+        if (element instanceof StartEvent startEvent) {
+            formKey = startEvent.getCamundaFormKey();
+            businessKeyVar = readBusinessKeyVarAttribute(formData);
+            if (businessKeyVar == null || businessKeyVar.isBlank()) {
+                businessKeyVar = inferTuneBusinessKeyVar(fields);
+            }
+        } else if (element instanceof UserTask userTask) {
+            formKey = userTask.getCamundaFormKey();
+        }
+        return Optional.of(new FormDataSpec(formKey, businessKeyVar, List.copyOf(fields)));
+    }
+
+    /** Old FormService parity: {@code formDataModel.getAttributeValue("businessKey")}. */
+    private static String readBusinessKeyVarAttribute(CamundaFormData formData) {
+        try {
+            return formData.getAttributeValue("businessKey");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** TUNE corpus convention when formData has no businessKey attribute (4888/6004/7000). */
+    static String inferTuneBusinessKeyVar(List<FormFieldSpec> fields) {
+        for (FormFieldSpec field : fields) {
+            String id = field.id();
+            if (id != null && id.startsWith("request_id_") && id.endsWith("_start_form")) {
+                return id;
+            }
+        }
+        return null;
     }
 
     private static FormFieldSpec mapField(CamundaFormField field) {

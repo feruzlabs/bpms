@@ -364,6 +364,30 @@ public final class ExecutionEngine {
                     close(at);
                     return;
                 }
+
+                // Inclusive fork (plan 22): all true conditional branches get a token (not just the first).
+                if (node instanceof InclusiveGatewayNode && outgoing.size() > 1) {
+                    completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
+                    for (int i = 1; i < outgoing.size(); i++) {
+                        tokens.save(new TokenRecord(
+                                UUID.randomUUID().toString(), at.instanceId(),
+                                outgoing.get(i).targetRef(), TokenStatus.ACTIVE, null));
+                    }
+                    current = new TokenRecord(
+                            at.id(), at.instanceId(),
+                            outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
+                    tokens.save(current);
+                    for (int i = 1; i < outgoing.size(); i++) {
+                        final String siblingNode = outgoing.get(i).targetRef();
+                        TokenRecord sibling = tokens.findByInstanceId(at.instanceId()).stream()
+                                .filter(t -> siblingNode.equals(t.currentNodeId()) && t.status() == TokenStatus.ACTIVE)
+                                .findFirst()
+                                .orElseThrow();
+                        run(definition, sibling, businessKey);
+                    }
+                    continue;
+                }
+
                 completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
                 current = new TokenRecord(
                         at.id(), at.instanceId(),

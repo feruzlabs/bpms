@@ -38,6 +38,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -100,6 +101,51 @@ class GatewayUnconditionalFlowTest {
                 "Should use conditional branch when condition is true");
     }
 
+    @Test
+    void inclusiveGatewayTakesAllTrueConditionalBranches() {
+        ProcessDefinition definition = inclusiveGatewayProcess();
+
+        InMemoryPorts ports = new InMemoryPorts();
+        ports.variables.put("score", 80L);
+        ExecutionEngine engine = newEngine(ports, false);
+        TokenRecord token = new TokenRecord("t1", "i1", "start", TokenStatus.ACTIVE, null);
+        ports.tokens.put(token.id(), token);
+        ports.instances.put("i1", new InstanceRecord("i1", "d1", "bk", InstanceStatus.RUNNING, Instant.now(), null));
+
+        engine.run(definition, token, "bk");
+
+        assertTrue(ports.tokens.values().stream()
+                .anyMatch(t -> "end_high".equals(t.currentNodeId()) && t.status() == TokenStatus.COMPLETED),
+                "score>50 branch should complete");
+        assertTrue(ports.tokens.values().stream()
+                .anyMatch(t -> "end_mid".equals(t.currentNodeId()) && t.status() == TokenStatus.COMPLETED),
+                "score>30 branch should also complete (inclusive = all true)");
+        assertFalse(ports.tokens.values().stream()
+                .anyMatch(t -> "end_default".equals(t.currentNodeId())),
+                "default branch should not run when conditions match");
+    }
+
+    @Test
+    void inclusiveGatewayFallsBackToUnconditionalWhenNoConditionMatches() {
+        ProcessDefinition definition = inclusiveGatewayProcess();
+
+        InMemoryPorts ports = new InMemoryPorts();
+        ports.variables.put("score", 10L);
+        ExecutionEngine engine = newEngine(ports, false);
+        TokenRecord token = new TokenRecord("t1", "i1", "start", TokenStatus.ACTIVE, null);
+        ports.tokens.put(token.id(), token);
+        ports.instances.put("i1", new InstanceRecord("i1", "d1", "bk", InstanceStatus.RUNNING, Instant.now(), null));
+
+        engine.run(definition, token, "bk");
+
+        assertTrue(ports.tokens.values().stream()
+                .anyMatch(t -> "end_default".equals(t.currentNodeId()) && t.status() == TokenStatus.COMPLETED),
+                "Should fallback to unconditional when no condition is true");
+        assertFalse(ports.tokens.values().stream()
+                .anyMatch(t -> "end_high".equals(t.currentNodeId()) || "end_mid".equals(t.currentNodeId())),
+                "Conditional branches should not run when score is too low");
+    }
+
     /**
      * Merge gateway: start → noop → exclusive gw (1 unconditional outgoing) → end.
      * Token should pass through gateway to end node.
@@ -141,6 +187,31 @@ class GatewayUnconditionalFlowTest {
                         new SequenceFlow("f2", null, "noop", "gw", Optional.empty()),
                         new SequenceFlow("toOk", null, "gw", "end_ok",
                                 Optional.of(new ConditionExpr("amount.intValue() > 100"))),
+                        new SequenceFlow("toDefault", null, "gw", "end_default", Optional.empty())
+                ),
+                List.of(), List.of(), Map.of()
+        );
+    }
+
+    /** Inclusive: score>50 AND score>30 both true at score=80 → fork to end_high and end_mid. */
+    private static ProcessDefinition inclusiveGatewayProcess() {
+        return new ProcessDefinition(
+                "demo", "demo", "demo",
+                List.of(
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
+                        new InclusiveGatewayNode("gw", null, null, Optional.empty(), List.of()),
+                        new EndEventNode("end_high", null, Optional.empty(), Optional.empty(), List.of()),
+                        new EndEventNode("end_mid", null, Optional.empty(), Optional.empty(), List.of()),
+                        new EndEventNode("end_default", null, Optional.empty(), Optional.empty(), List.of())
+                ),
+                List.of(
+                        new SequenceFlow("f1", null, "start", "noop", Optional.empty()),
+                        new SequenceFlow("f2", null, "noop", "gw", Optional.empty()),
+                        new SequenceFlow("toHigh", null, "gw", "end_high",
+                                Optional.of(new ConditionExpr("score.intValue() > 50"))),
+                        new SequenceFlow("toMid", null, "gw", "end_mid",
+                                Optional.of(new ConditionExpr("score.intValue() > 30"))),
                         new SequenceFlow("toDefault", null, "gw", "end_default", Optional.empty())
                 ),
                 List.of(), List.of(), Map.of()
