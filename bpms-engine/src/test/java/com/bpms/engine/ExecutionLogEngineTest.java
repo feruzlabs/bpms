@@ -121,7 +121,7 @@ class ExecutionLogEngineTest {
         return new ProcessDefinition(
                 "p", "p", "p",
                 List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), null, Optional.empty(), List.of()),
                         new ServiceTaskNode("score", null,
                                 new ConnectorImplementation(new ConnectorBinding(
                                         "GetScoringResultV9Connector",

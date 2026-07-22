@@ -11,5 +11,6 @@
     <include file="changes/004-auth-stats.xml" relativeToChangelogFile="true"/>
     <include file="changes/005-adapter-compat.xml" relativeToChangelogFile="true"/>
     <include file="changes/006-instance-control.xml" relativeToChangelogFile="true"/>
+    <include file="changes/007-human-workflow.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

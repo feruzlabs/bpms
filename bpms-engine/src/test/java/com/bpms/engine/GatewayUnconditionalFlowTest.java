@@ -154,7 +154,7 @@ class GatewayUnconditionalFlowTest {
         return new ProcessDefinition(
                 "demo", "demo", "demo",
                 List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), null, Optional.empty(), List.of()),
                         new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
                         new ExclusiveGatewayNode("gw", null, null, Optional.empty(), List.of()),
                         new EndEventNode("end", null, Optional.empty(), Optional.empty(), List.of())
@@ -176,7 +176,7 @@ class GatewayUnconditionalFlowTest {
         return new ProcessDefinition(
                 "demo", "demo", "demo",
                 List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), null, Optional.empty(), List.of()),
                         new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
                         new ExclusiveGatewayNode("gw", null, null, Optional.empty(), List.of()),
                         new EndEventNode("end_ok", null, Optional.empty(), Optional.empty(), List.of()),
@@ -198,7 +198,7 @@ class GatewayUnconditionalFlowTest {
         return new ProcessDefinition(
                 "demo", "demo", "demo",
                 List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), null, Optional.empty(), List.of()),
                         new ServiceTaskNode("noop", null, new EmptyImplementation(), Optional.empty(), List.of()),
                         new InclusiveGatewayNode("gw", null, null, Optional.empty(), List.of()),
                         new EndEventNode("end_high", null, Optional.empty(), Optional.empty(), List.of()),

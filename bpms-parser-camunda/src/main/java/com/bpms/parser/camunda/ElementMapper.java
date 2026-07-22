@@ -21,6 +21,7 @@ import com.bpms.core.definition.ServiceTaskNode;
 import com.bpms.core.definition.StartEventNode;
 import com.bpms.core.definition.SubProcessNode;
 import com.bpms.core.definition.TaskNode;
+import com.bpms.core.definition.TerminateEventDef;
 import com.bpms.core.definition.UnsupportedEventDef;
 import com.bpms.core.definition.UserTaskNode;
 import org.camunda.bpm.model.bpmn.instance.Activity;
@@ -45,6 +46,7 @@ import org.camunda.bpm.model.bpmn.instance.ServiceTask;
 import org.camunda.bpm.model.bpmn.instance.StartEvent;
 import org.camunda.bpm.model.bpmn.instance.SubProcess;
 import org.camunda.bpm.model.bpmn.instance.Task;
+import org.camunda.bpm.model.bpmn.instance.TerminateEventDefinition;
 import org.camunda.bpm.model.bpmn.instance.TimerEventDefinition;
 import org.camunda.bpm.model.bpmn.instance.UserTask;
 
@@ -113,7 +115,8 @@ final class ElementMapper {
     private StartEventNode mapStartEvent(StartEvent event, ParseContext ctx) {
         return new StartEventNode(
                 event.getId(), event.getName(), mapEventDefinitions(event, ctx),
-                ExtensionReader.readFormData(event), Optional.empty(), ExtensionReader.readListeners(event));
+                ExtensionReader.readFormData(event), event.getCamundaInitiator(),
+                Optional.empty(), ExtensionReader.readListeners(event));
     }
 
     private EndEventNode mapEndEvent(EndEvent event, ParseContext ctx) {
@@ -135,6 +138,13 @@ final class ElementMapper {
     private UserTaskNode mapUserTask(UserTask task) {
         return new UserTaskNode(
                 task.getId(), task.getName(), ExtensionReader.readFormData(task),
+                task.getCamundaAssignee(),
+                task.getCamundaCandidateGroups(),
+                task.getCamundaCandidateUsers(),
+                task.getCamundaDueDate(),
+                task.getCamundaPriority(),
+                ImplementationReader.readElementInputs(task),
+                ImplementationReader.readElementOutputs(task),
                 multiInstance(task), ExtensionReader.readListeners(task));
     }
 
@@ -147,7 +157,11 @@ final class ElementMapper {
     }
 
     private ManualTaskNode mapManualTask(ManualTask task) {
-        return new ManualTaskNode(task.getId(), task.getName(), multiInstance(task), ExtensionReader.readListeners(task));
+        return new ManualTaskNode(
+                task.getId(), task.getName(),
+                ImplementationReader.readElementInputs(task),
+                ImplementationReader.readElementOutputs(task),
+                multiInstance(task), ExtensionReader.readListeners(task));
     }
 
     private SendTaskNode mapSendTask(SendTask task) {
@@ -283,13 +297,17 @@ final class ElementMapper {
         if (!timers.isEmpty()) {
             return Optional.of(TimerReader.read(timers.iterator().next()));
         }
+        Collection<TerminateEventDefinition> terminates = event.getChildElementsByType(TerminateEventDefinition.class);
+        if (!terminates.isEmpty()) {
+            return Optional.of(new TerminateEventDef());
+        }
         Collection<org.camunda.bpm.model.bpmn.instance.EventDefinition> other =
                 event.getChildElementsByType(org.camunda.bpm.model.bpmn.instance.EventDefinition.class);
         if (!other.isEmpty()) {
             org.camunda.bpm.model.bpmn.instance.EventDefinition first = other.iterator().next();
             String defType = first.getElementType().getTypeName();
             ctx.warn(event.getId(), defType,
-                    "Event definition not given semantics by old engine (only message/timer); recorded as unsupported");
+                    "Event definition not given semantics by old engine (only message/timer/terminate); recorded as unsupported");
             return Optional.of(new UnsupportedEventDef(defType));
         }
         return Optional.empty();

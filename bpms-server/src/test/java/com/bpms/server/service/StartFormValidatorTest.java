@@ -74,7 +74,7 @@ class StartFormValidatorTest {
                         Optional.of(new FormDataSpec("form", null, List.of(
                                 new FormFieldSpec("other", null, "string", null, false, Map.of(), Map.of(), List.of())
                         ))),
-                        Optional.empty(), List.of())),
+                        null, Optional.empty(), List.of())),
                 List.of(), List.of(), List.of(), Map.of());
         assertEquals("REQ-HTTP", ProcessEngineService.resolveBusinessKey(model, Map.of(), "REQ-HTTP"));
     }
@@ -93,7 +93,7 @@ class StartFormValidatorTest {
                                         field("without_report_to_tune", "boolean", "false"),
                                         field("amount_tune_credit_request_start_form", "string")
                                 ))),
-                        Optional.empty(), List.of())),
+                        null, Optional.empty(), List.of())),
                 List.of(), List.of(), List.of(), Map.of());
     }
 

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal regional_vacation approval skeleton (ADR-001: no script listeners). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  id="Definitions_vacation_skeleton">
+  <bpmn:process id="vacation_skeleton" name="Vacation skeleton" isExecutable="true">
+    <bpmn:startEvent id="Start" name="Request" camunda:initiator="starterUser">
+      <bpmn:outgoing>f_start</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:userTask id="EmployeeTask" name="Employee" camunda:formKey="emp_form"
+                   camunda:assignee="EMPLOYEE__$employee__empId" camunda:dueDate="$TASK_EXPIRED_DATE" camunda:priority="1">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="employee_sign" label="Sign" type="string"/>
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="task_level">PRIMARY</camunda:inputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_start</bpmn:incoming>
+      <bpmn:outgoing>f_emp_gw</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="EmpGw" name="Signed?" default="f_emp_ok">
+      <bpmn:incoming>f_emp_gw</bpmn:incoming>
+      <bpmn:outgoing>f_emp_reject</bpmn:outgoing>
+      <bpmn:outgoing>f_emp_ok</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_emp_reject" sourceRef="EmpGw" targetRef="EndReject">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">$employee_sign == null</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_emp_ok" sourceRef="EmpGw" targetRef="HeadTask"/>
+
+    <bpmn:endEvent id="EndReject" name="Rejected">
+      <bpmn:incoming>f_emp_reject</bpmn:incoming>
+      <bpmn:terminateEventDefinition/>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="HeadTask" name="Head" camunda:formKey="head_form"
+                   camunda:assignee="EMPLOYEE__$head__empId" camunda:priority="2">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="head_sign" label="Sign" type="string"/>
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_emp_ok</bpmn:incoming>
+      <bpmn:outgoing>f_head_gw</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="HeadGw" name="Head signed?" default="f_head_ok">
+      <bpmn:incoming>f_head_gw</bpmn:incoming>
+      <bpmn:outgoing>f_head_reject</bpmn:outgoing>
+      <bpmn:outgoing>f_head_ok</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f_head_reject" sourceRef="HeadGw" targetRef="EndRejectHead">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">$head_sign == null</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_head_ok" sourceRef="HeadGw" targetRef="DoneManual"/>
+
+    <bpmn:endEvent id="EndRejectHead" name="Rejected head">
+      <bpmn:incoming>f_head_reject</bpmn:incoming>
+      <bpmn:terminateEventDefinition/>
+    </bpmn:endEvent>
+
+    <bpmn:manualTask id="DoneManual" name="Archive">
+      <bpmn:incoming>f_head_ok</bpmn:incoming>
+      <bpmn:outgoing>f_end</bpmn:outgoing>
+    </bpmn:manualTask>
+
+    <bpmn:endEvent id="EndOk" name="Completed">
+      <bpmn:incoming>f_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="f_start" sourceRef="Start" targetRef="EmployeeTask"/>
+    <bpmn:sequenceFlow id="f_emp_gw" sourceRef="EmployeeTask" targetRef="EmpGw"/>
+    <bpmn:sequenceFlow id="f_head_gw" sourceRef="HeadTask" targetRef="HeadGw"/>
+    <bpmn:sequenceFlow id="f_end" sourceRef="DoneManual" targetRef="EndOk"/>
+  </bpmn:process>
+</bpmn:definitions>

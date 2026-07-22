@@ -1,12 +1,23 @@
 package com.bpms.spi.engine;
 
 import java.util.Map;
-import com.bpms.spi.engine.RuntimeModels.DeployResult;
-import com.bpms.spi.engine.RuntimeModels.InstanceView;
 
 public interface ProcessEnginePort {
-    DeployResult deploy(byte[] bpmnXml);
-    InstanceView start(String definitionKeyOrId, String businessKey, Map<String, Object> variables);
-    InstanceView getInstance(String instanceId);
-    InstanceView completeTask(String taskId, Map<String, Object> variables);
+    RuntimeModels.DeployResult deploy(byte[] bpmnXml);
+
+    RuntimeModels.InstanceView start(String definitionKeyOrId, String businessKey, Map<String, Object> variables);
+
+    default RuntimeModels.InstanceView start(
+            String definitionKeyOrId, String businessKey, Map<String, Object> variables, String startedBy
+    ) {
+        return start(definitionKeyOrId, businessKey, variables);
+    }
+
+    RuntimeModels.InstanceView getInstance(String instanceId);
+
+    RuntimeModels.InstanceView completeTask(String taskId, Map<String, Object> variables);
+
+    default RuntimeModels.InstanceView claimTask(String taskId, String assignee) {
+        throw new UnsupportedOperationException("claimTask");
+    }
 }

@@ -43,7 +43,7 @@ class RunawayGuardEngineTest {
         return new ProcessDefinition(
                 "loop", "loop", "loop",
                 List.of(
-                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), Optional.empty(), List.of()),
+                        new StartEventNode("start", null, Optional.empty(), Optional.empty(), null, Optional.empty(), List.of()),
                         new ServiceTaskNode("a", null, new EmptyImplementation(), Optional.empty(), List.of()),
                         new ServiceTaskNode("b", null, new EmptyImplementation(), Optional.empty(), List.of())
                 ),

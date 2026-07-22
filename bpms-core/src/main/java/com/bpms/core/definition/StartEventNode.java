@@ -8,6 +8,7 @@ public record StartEventNode(
         String name,
         Optional<EventDefinition> eventDefinition,
         Optional<FormDataSpec> formData,
+        String initiator,
         Optional<MultiInstanceSpec> multiInstance,
         List<ListenerSpec> listeners
 ) implements FlowNode {

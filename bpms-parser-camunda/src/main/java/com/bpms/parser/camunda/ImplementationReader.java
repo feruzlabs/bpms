@@ -91,6 +91,32 @@ final class ImplementationReader {
         return new EmptyImplementation();
     }
 
+    /**
+     * Element-level {@code camunda:inputOutput} (userTask / manualTask / …), not connector-scoped.
+     */
+    static List<IoParameter> readElementInputs(BaseElement element) {
+        CamundaInputOutput io = elementInputOutput(element);
+        return io == null ? List.of() : readInputs(io.getCamundaInputParameters());
+    }
+
+    static List<IoParameter> readElementOutputs(BaseElement element) {
+        CamundaInputOutput io = elementInputOutput(element);
+        return io == null ? List.of() : readOutputs(io.getCamundaOutputParameters());
+    }
+
+    private static CamundaInputOutput elementInputOutput(BaseElement element) {
+        if (element.getExtensionElements() == null) {
+            return null;
+        }
+        int count = element.getExtensionElements().getElementsQuery()
+                .filterByType(CamundaInputOutput.class).count();
+        if (count == 0) {
+            return null;
+        }
+        return element.getExtensionElements().getElementsQuery()
+                .filterByType(CamundaInputOutput.class).singleResult();
+    }
+
     private static List<IoParameter> readInputs(Collection<CamundaInputParameter> parameters) {
         if (parameters == null || parameters.isEmpty()) {
             return List.of();

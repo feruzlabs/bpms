@@ -92,13 +92,13 @@ mos (BEFORE/AFTER).
 - **manualTask pass-through:** listener'sиз manualTask → token darhol o'tади.
 
 ## 9. DoD
-- [ ] userTask: WAITING + `user_task` (assignee/dueDate/priority ifoda, form); `POST /tasks/{id}/complete` → davom.
-- [ ] manualTask pass-through (listener ADR-001 bo'yicha).
-- [ ] terminateEndEvent — instance'ни tugатади (barcha token); reja 27 TERMINATE'дан ajratilган.
-- [ ] camunda:initiator → `created_by`.
-- [ ] input/output mapping.
-- [ ] Parser bularни o'qийди; regional_vacation skeleti testда yuрadi (skript-listener'сиз, ADR-001 externalize bilan).
-- [ ] Eski bpms 0 diff.
+- [x] userTask: WAITING + `user_task` (assignee/dueDate/priority ifoda, form); `POST /tasks/{id}/complete` → davom.
+- [x] manualTask pass-through (listener ADR-001 bo'yicha).
+- [x] terminateEndEvent — instance'ни tugатади (barcha token); reja 27 TERMINATE'дан ajratilган.
+- [x] camunda:initiator → `created_by`.
+- [x] input/output mapping.
+- [x] Parser bularни o'qийди; regional_vacation skeleti testда yuрadi (skript-listener'сиз, ADR-001 externalize bilan).
+- [x] Eski bpms 0 diff.
 
 ## 10. Bog'liqlik
 - **Task-forma validatsiyasi** — reja 30 validator (qayta ishlatilади).

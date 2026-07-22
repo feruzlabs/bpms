@@ -26,6 +26,7 @@ import com.bpms.core.definition.StartEventNode;
 import com.bpms.core.definition.SubProcessNode;
 import com.bpms.core.definition.TaskNode;
 import com.bpms.core.definition.UserTaskNode;
+import com.bpms.expression.HumanTaskExpressions;
 import com.bpms.spi.connector.ConnectorContext;
 import com.bpms.spi.connector.ConnectorResult;
 import com.bpms.spi.engine.RuntimeModels.InstanceRecord;
@@ -226,19 +227,42 @@ public final class ExecutionEngine {
             try {
                 fireListeners(node, stateId, "BEFORE", vars, at.instanceId(), nodeId);
 
-                if (node instanceof EndEventNode) {
+                if (node instanceof EndEventNode end) {
+                    if (end.isTerminate()) {
+                        completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
+                        terminateInstance(at.instanceId());
+                        return;
+                    }
                     completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
                     close(at);
                     return;
                 }
 
                 if (node instanceof UserTaskNode user) {
+                    applyIoInputs(user.inputs(), at.instanceId(), vars);
+                    vars = variables.getAll(at.instanceId());
+                    String assignee = HumanTaskExpressions.resolveAssignee(user.assignee(), expressions, vars);
+                    Instant due = HumanTaskExpressions.resolveDueDate(user.dueDate(), expressions, vars);
+                    int priority = HumanTaskExpressions.resolvePriority(user.priority(), expressions, vars);
+                    String formKey = user.formData().map(f -> f.formKey()).orElse(null);
                     tokens.save(new TokenRecord(at.id(), at.instanceId(), at.currentNodeId(), TokenStatus.WAITING, null));
                     instances.save(withStatus(at.instanceId(), InstanceStatus.WAITING));
                     tasks.save(new UserTaskRecord(
                             UUID.randomUUID().toString(), at.instanceId(), at.id(),
-                            user.id(), user.name(), false, clock.now(), null));
+                            user.id(), user.name(),
+                            assignee,
+                            HumanTaskExpressions.resolveCsv(user.candidateGroups(), expressions, vars),
+                            HumanTaskExpressions.resolveCsv(user.candidateUsers(), expressions, vars),
+                            due, priority, formKey, null, null,
+                            false, clock.now(), null));
+                    // Keep token_state ACTIVE until completeTask (same pattern as WAITING_JOB).
                     return;
+                }
+
+                if (node instanceof ManualTaskNode manual) {
+                    applyIoInputs(manual.inputs(), at.instanceId(), vars);
+                    vars = variables.getAll(at.instanceId());
+                    // pass-through — fall through to outgoing advance; outputs applied below after advance prep
                 }
 
                 if (node instanceof ParallelGatewayNode) {
@@ -309,6 +333,11 @@ public final class ExecutionEngine {
                     if (script.resultVariable() != null && !script.resultVariable().isBlank()) {
                         variables.putAll(at.instanceId(), Map.of(script.resultVariable(), result));
                     }
+                }
+
+                if (node instanceof ManualTaskNode manual) {
+                    applyIoOutputs(manual.outputs(), at.instanceId(), variables.getAll(at.instanceId()));
+                    vars = variables.getAll(at.instanceId());
                 }
 
                 final Map<String, Object> evalVars = vars;
@@ -398,6 +427,84 @@ public final class ExecutionEngine {
                 throw e;
             }
         }
+    }
+
+    /** Called after a userTask is completed externally — fires AFTER listeners and advances. */
+    public void continueAfterUserTask(ProcessDefinition definition, TokenRecord waitingToken, String businessKey) {
+        FlowNode node = definition.node(waitingToken.currentNodeId()).orElseThrow();
+        Map<String, Object> vars = variables.getAll(waitingToken.instanceId());
+        if (node instanceof UserTaskNode user) {
+            applyIoOutputs(user.outputs(), waitingToken.instanceId(), vars);
+            vars = variables.getAll(waitingToken.instanceId());
+        }
+        tokenState.activeStateId(waitingToken.id(), node.id()).ifPresent(stateId -> {
+            try {
+                fireListeners(node, stateId, "AFTER", variables.getAll(waitingToken.instanceId()),
+                        waitingToken.instanceId(), node.id());
+                tokenState.exit(stateId, "COMPLETED", clock.now(), null, null);
+            } catch (RuntimeException e) {
+                tokenState.exit(stateId, "FAILED", clock.now(), null, e.getMessage());
+                throw e;
+            }
+        });
+
+        List<SequenceFlow> outgoing = definition.outgoing(node.id());
+        if (outgoing.isEmpty()) {
+            close(new TokenRecord(
+                    waitingToken.id(), waitingToken.instanceId(), waitingToken.currentNodeId(),
+                    TokenStatus.ACTIVE, null));
+            return;
+        }
+        TokenRecord next = new TokenRecord(
+                waitingToken.id(), waitingToken.instanceId(),
+                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
+        tokens.save(next);
+        instances.save(withStatus(waitingToken.instanceId(), InstanceStatus.RUNNING));
+        run(definition, next, businessKey);
+    }
+
+    /** BPMN terminateEndEvent: cancel every live token and complete the instance (≠ admin TERMINATE). */
+    private void terminateInstance(String instanceId) {
+        for (TokenRecord t : tokens.findByInstanceId(instanceId)) {
+            if (t.status() == TokenStatus.ACTIVE
+                    || t.status() == TokenStatus.WAITING
+                    || t.status() == TokenStatus.WAITING_JOB) {
+                tokens.save(new TokenRecord(
+                        t.id(), t.instanceId(), t.currentNodeId(), TokenStatus.CANCELED, t.parentMultiInstanceId()));
+            }
+        }
+        tasks.completeOpenTasks(instanceId, clock.now());
+        InstanceRecord old = instances.findInstanceById(instanceId).orElseThrow();
+        instances.save(new InstanceRecord(
+                old.id(), old.definitionId(), old.businessKey(), InstanceStatus.COMPLETED,
+                old.createdAt(), clock.now(), old.createdBy()));
+        execLog.log(instanceEnd(instanceId, "OK", "terminateEndEvent"));
+    }
+
+    private void applyIoInputs(List<IoParameter> inputs, String instanceId, Map<String, Object> vars) {
+        if (inputs == null || inputs.isEmpty()) {
+            return;
+        }
+        Map<String, Object> mapped = new LinkedHashMap<>();
+        for (IoParameter p : inputs) {
+            if (p.name() == null || p.name().isBlank()) {
+                continue;
+            }
+            if (p.value() != null) {
+                mapped.put(p.name(), expressions.evaluate(p.value(), vars));
+            } else if (!p.list().isEmpty()) {
+                mapped.put(p.name(), p.list());
+            } else if (!p.map().isEmpty()) {
+                mapped.put(p.name(), p.map());
+            }
+        }
+        if (!mapped.isEmpty()) {
+            variables.putAll(instanceId, mapped);
+        }
+    }
+
+    private void applyIoOutputs(List<IoParameter> outputs, String instanceId, Map<String, Object> vars) {
+        applyIoInputs(outputs, instanceId, vars);
     }
 
     /** Called by JobQueue consumers after a serviceTask job finishes connector work. */
@@ -636,7 +743,8 @@ public final class ExecutionEngine {
         InstanceRecord old = instances.findInstanceById(id).orElseThrow();
         return new InstanceRecord(
                 old.id(), old.definitionId(), old.businessKey(), status, old.createdAt(),
-                status == InstanceStatus.COMPLETED || status == InstanceStatus.FAILED ? clock.now() : old.endedAt());
+                status == InstanceStatus.COMPLETED || status == InstanceStatus.FAILED ? clock.now() : old.endedAt(),
+                old.createdBy());
     }
 
     private void close(TokenRecord token) {

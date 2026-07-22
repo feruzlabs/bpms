@@ -1,11 +1,11 @@
 package com.bpms.server.service;
 
 import com.bpms.core.definition.FlowNode;
-import com.bpms.core.definition.ParseResult;
 import com.bpms.core.definition.FormDataSpec;
+import com.bpms.core.definition.ParseResult;
 import com.bpms.core.definition.ProcessDefinition;
-import com.bpms.core.definition.SequenceFlow;
 import com.bpms.core.definition.StartEventNode;
+import com.bpms.core.definition.UserTaskNode;
 import com.bpms.engine.ExecutionEngine;
 import com.bpms.spi.engine.ProcessEnginePort;
 import com.bpms.spi.engine.RuntimeModels.DefinitionRecord;
@@ -104,28 +104,44 @@ public class ProcessEngineService implements ProcessEnginePort {
 
     @Override
     public InstanceView start(String ref, String businessKey, Map<String, Object> input) {
+        return start(ref, businessKey, input, null);
+    }
+
+    @Override
+    public InstanceView start(String ref, String businessKey, Map<String, Object> input, String startedBy) {
         DefinitionRecord d = definitions.findDefinitionById(ref)
                 .or(() -> definitions.findLatestByKey(ref))
                 .orElseThrow(() -> new NoSuchElementException("Definition not found: " + ref));
         ProcessDefinition model = registry.get(d.id());
-        Map<String, Object> values = StartFormValidator.validateAndCoerce(model, input);
+        Map<String, Object> values = new LinkedHashMap<>(StartFormValidator.validateAndCoerce(model, input));
         String bk = resolveBusinessKey(model, values, businessKey);
-
-        String iid = UUID.randomUUID().toString();
-        instances.save(new InstanceRecord(iid, d.id(), bk, InstanceStatus.RUNNING, clock.now(), null));
-        variables.putAll(iid, values);
-        Map<String, Object> startDetails = new LinkedHashMap<>();
-        startDetails.put("variables", new LinkedHashMap<>(values));
-        execLog.log(new LogEntry(
-                iid, null, null, null, null,
-                "INSTANCE_START", "OK", bk,
-                startDetails, null, clock.now()));
 
         StartEventNode start = model.nodes().stream()
                 .filter(StartEventNode.class::isInstance)
                 .map(StartEventNode.class::cast)
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Definition has no start event"));
+
+        if (startedBy != null && !startedBy.isBlank()) {
+            if (start.initiator() != null && !start.initiator().isBlank()) {
+                values.put(start.initiator(), startedBy);
+            }
+        }
+
+        String iid = UUID.randomUUID().toString();
+        instances.save(new InstanceRecord(
+                iid, d.id(), bk, InstanceStatus.RUNNING, clock.now(), null, startedBy));
+        variables.putAll(iid, values);
+        Map<String, Object> startDetails = new LinkedHashMap<>();
+        startDetails.put("variables", new LinkedHashMap<>(values));
+        if (startedBy != null) {
+            startDetails.put("startedBy", startedBy);
+        }
+        execLog.log(new LogEntry(
+                iid, null, null, null, null,
+                "INSTANCE_START", "OK", bk,
+                startDetails, null, clock.now()));
+
         TokenRecord token = new TokenRecord(UUID.randomUUID().toString(), iid, start.id(), TokenStatus.ACTIVE, null);
         tokens.save(token);
 
@@ -149,8 +165,8 @@ public class ProcessEngineService implements ProcessEnginePort {
     }
 
     /**
-     * Business key resolution (plan 30 §4, old BpmExecutionService parity):
-     * when start form declares {@code businessKeyVar} and input contains it → use that value;
+     * Business key resolution (plan 30 В§4, old BpmExecutionService parity):
+     * when start form declares {@code businessKeyVar} and input contains it в†’ use that value;
      * otherwise fall back to request {@code businessKey}.
      */
     static String resolveBusinessKey(ProcessDefinition model, Map<String, Object> values, String requestBk) {
@@ -193,23 +209,45 @@ public class ProcessEngineService implements ProcessEnginePort {
         if (task.completed()) {
             throw new IllegalStateException("Task already completed");
         }
-        variables.putAll(task.instanceId(), input == null ? Map.of() : input);
-        tasks.save(new UserTaskRecord(
-                task.id(), task.instanceId(), task.tokenId(), task.nodeId(), task.name(),
-                true, task.createdAt(), clock.now()));
         InstanceRecord instance = instances.findInstanceById(task.instanceId()).orElseThrow();
         ProcessDefinition model = registry.get(instance.definitionId());
+        FlowNode node = model.node(task.nodeId()).orElseThrow();
+
+        Map<String, Object> values = input == null ? Map.of() : input;
+        if (node instanceof UserTaskNode user && user.formData().isPresent()) {
+            values = StartFormValidator.validateAndCoerce(user.formData().get(), values);
+        }
+
+        String submittedJson;
+        try {
+            submittedJson = json.writeValueAsString(values);
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot serialize submitted_data", e);
+        }
+
+        variables.putAll(task.instanceId(), values);
+        tasks.save(new UserTaskRecord(
+                task.id(), task.instanceId(), task.tokenId(), task.nodeId(), task.name(),
+                task.assignee(), task.candidateGroups(), task.candidateUsers(),
+                task.dueDate(), task.priority(), task.formKey(), submittedJson, task.claimTime(),
+                true, task.createdAt(), clock.now()));
+
         TokenRecord waiting = tokens.findTokenById(task.tokenId()).orElseThrow();
-        FlowNode node = model.node(waiting.currentNodeId()).orElseThrow();
-        SequenceFlow next = model.outgoing(node.id()).stream().findFirst()
-                .orElseThrow(() -> new IllegalStateException("UserTask has no outgoing flow"));
-        TokenRecord active = new TokenRecord(
-                waiting.id(), waiting.instanceId(), next.targetRef(), TokenStatus.ACTIVE, null);
-        tokens.save(active);
-        instances.save(new InstanceRecord(
-                instance.id(), instance.definitionId(), instance.businessKey(),
-                InstanceStatus.RUNNING, instance.createdAt(), null));
-        engine.run(model, active, instance.businessKey());
+        if (waiting.status() != TokenStatus.WAITING) {
+            throw new IllegalStateException("Token is not WAITING for task " + taskId);
+        }
+        engine.continueAfterUserTask(model, waiting, instance.businessKey());
         return getInstance(instance.id());
     }
+
+    @Override
+    public InstanceView claimTask(String taskId, String assignee) {
+        if (assignee == null || assignee.isBlank()) {
+            throw new IllegalArgumentException("assignee is required");
+        }
+        UserTaskRecord claimed = tasks.claim(taskId, assignee, clock.now())
+                .orElseThrow(() -> new NoSuchElementException("Task not found or already completed: " + taskId));
+        return getInstance(claimed.instanceId());
+    }
 }
+

@@ -99,24 +99,28 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
         TenantDeployment td = tenantDeploymentForDefinition(i.definitionId());
         jdbc.update("""
                 insert into process_instance(
-                  id,tenant_id,definition_id,deployment_id,business_key,status,created_at,ended_at)
-                values(?,?,?,?,?,?,?,?)
-                on conflict(id) do update set status=excluded.status, ended_at=excluded.ended_at
+                  id,tenant_id,definition_id,deployment_id,business_key,status,created_at,ended_at,created_by)
+                values(?,?,?,?,?,?,?,?,?)
+                on conflict(id) do update set status=excluded.status, ended_at=excluded.ended_at,
+                  created_by=coalesce(excluded.created_by, process_instance.created_by)
                 """,
                 i.id(), td.tenantId(), i.definitionId(), td.deploymentId(), i.businessKey(), i.status().name(),
                 Timestamp.from(i.createdAt()),
-                i.endedAt() == null ? null : Timestamp.from(i.endedAt()));
+                i.endedAt() == null ? null : Timestamp.from(i.endedAt()),
+                i.createdBy());
         return i;
     }
 
     @Override
     public Optional<InstanceRecord> findInstanceById(String id) {
         return jdbc.query("""
-                select id,definition_id,business_key,status,created_at,ended_at from process_instance where id=?
+                select id,definition_id,business_key,status,created_at,ended_at,created_by
+                from process_instance where id=?
                 """, (r, n) -> new InstanceRecord(
                 r.getString(1), r.getString(2), r.getString(3), InstanceStatus.valueOf(r.getString(4)),
                 r.getTimestamp(5).toInstant(),
-                r.getTimestamp(6) == null ? null : r.getTimestamp(6).toInstant()), id)
+                r.getTimestamp(6) == null ? null : r.getTimestamp(6).toInstant(),
+                r.getString(7)), id)
                 .stream().findFirst();
     }
 
@@ -197,27 +201,118 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
     @Override
     public UserTaskRecord save(UserTaskRecord t) {
         String tenantId = tenantForInstance(t.instanceId());
-        jdbc.update("""
-                insert into user_task(
-                  id,tenant_id,instance_id,token_id,node_id,name,completed,created_at,completed_at)
-                values(?,?,?,?,?,?,?,?,?)
-                on conflict(id) do update set completed=excluded.completed, completed_at=excluded.completed_at
-                """,
-                t.id(), tenantId, t.instanceId(), t.tokenId(), t.nodeId(), t.name(), t.completed(),
-                Timestamp.from(t.createdAt()),
-                t.completedAt() == null ? null : Timestamp.from(t.completedAt()));
+        jdbc.update(con -> {
+            var ps = con.prepareStatement("""
+                    insert into user_task(
+                      id,tenant_id,instance_id,token_id,node_id,name,
+                      assignee,candidate_groups,candidate_users,due_date,priority,form_key,
+                      submitted_data,claim_time,completed,created_at,completed_at)
+                    values(?,?,?,?,?,?,?,?,?,?,?,?,cast(? as jsonb),?,?,?,?)
+                    on conflict(id) do update set
+                      assignee=excluded.assignee,
+                      candidate_groups=excluded.candidate_groups,
+                      candidate_users=excluded.candidate_users,
+                      due_date=excluded.due_date,
+                      priority=excluded.priority,
+                      form_key=excluded.form_key,
+                      submitted_data=excluded.submitted_data,
+                      claim_time=excluded.claim_time,
+                      completed=excluded.completed,
+                      completed_at=excluded.completed_at
+                    """);
+            int i = 1;
+            ps.setString(i++, t.id());
+            ps.setString(i++, tenantId);
+            ps.setString(i++, t.instanceId());
+            ps.setString(i++, t.tokenId());
+            ps.setString(i++, t.nodeId());
+            ps.setString(i++, t.name());
+            ps.setString(i++, t.assignee());
+            setPgTextArray(ps, i++, con, t.candidateGroups());
+            setPgTextArray(ps, i++, con, t.candidateUsers());
+            if (t.dueDate() == null) {
+                ps.setTimestamp(i++, null);
+            } else {
+                ps.setTimestamp(i++, Timestamp.from(t.dueDate()));
+            }
+            ps.setInt(i++, t.priority());
+            ps.setString(i++, t.formKey());
+            ps.setString(i++, t.submittedData());
+            if (t.claimTime() == null) {
+                ps.setTimestamp(i++, null);
+            } else {
+                ps.setTimestamp(i++, Timestamp.from(t.claimTime()));
+            }
+            ps.setBoolean(i++, t.completed());
+            ps.setTimestamp(i++, Timestamp.from(t.createdAt()));
+            if (t.completedAt() == null) {
+                ps.setTimestamp(i, null);
+            } else {
+                ps.setTimestamp(i, Timestamp.from(t.completedAt()));
+            }
+            return ps;
+        });
         return t;
     }
 
     @Override
     public Optional<UserTaskRecord> findTaskById(String id) {
         return jdbc.query("""
-                select id,instance_id,token_id,node_id,name,completed,created_at,completed_at from user_task where id=?
+                select id,instance_id,token_id,node_id,name,assignee,
+                       candidate_groups,candidate_users,due_date,priority,form_key,
+                       submitted_data::text,claim_time,completed,created_at,completed_at
+                from user_task where id=?
                 """, (r, n) -> new UserTaskRecord(
-                r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5), r.getBoolean(6),
-                r.getTimestamp(7).toInstant(),
-                r.getTimestamp(8) == null ? null : r.getTimestamp(8).toInstant()), id)
+                r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5),
+                r.getString(6),
+                readPgTextArray(r.getArray(7)),
+                readPgTextArray(r.getArray(8)),
+                r.getTimestamp(9) == null ? null : r.getTimestamp(9).toInstant(),
+                r.getInt(10),
+                r.getString(11),
+                r.getString(12),
+                r.getTimestamp(13) == null ? null : r.getTimestamp(13).toInstant(),
+                r.getBoolean(14),
+                r.getTimestamp(15).toInstant(),
+                r.getTimestamp(16) == null ? null : r.getTimestamp(16).toInstant()), id)
                 .stream().findFirst();
+    }
+
+    @Override
+    public void completeOpenTasks(String instanceId, Instant at) {
+        jdbc.update("""
+                update user_task set completed=true, completed_at=?
+                 where instance_id=? and completed=false
+                """, Timestamp.from(at), instanceId);
+    }
+
+    private static void setPgTextArray(java.sql.PreparedStatement ps, int index, java.sql.Connection con, List<String> values)
+            throws java.sql.SQLException {
+        if (values == null || values.isEmpty()) {
+            ps.setNull(index, java.sql.Types.ARRAY);
+            return;
+        }
+        ps.setArray(index, con.createArrayOf("varchar", values.toArray()));
+    }
+
+    private static List<String> readPgTextArray(java.sql.Array array) throws java.sql.SQLException {
+        if (array == null) {
+            return List.of();
+        }
+        Object raw = array.getArray();
+        if (raw instanceof String[] strings) {
+            return List.of(strings);
+        }
+        if (raw instanceof Object[] objects) {
+            List<String> out = new java.util.ArrayList<>();
+            for (Object o : objects) {
+                if (o != null) {
+                    out.add(String.valueOf(o));
+                }
+            }
+            return List.copyOf(out);
+        }
+        return List.of();
     }
 
     @Override

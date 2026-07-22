@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  id="Definitions_human_task_parse">
+  <bpmn:process id="human_task_parse" name="Human task parse" isExecutable="true">
+    <bpmn:startEvent id="start" name="Start" camunda:initiator="starterUser">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="ut1" name="Approve" camunda:formKey="approve_form"
+                   camunda:assignee="EMPLOYEE__$employee__empId"
+                   camunda:dueDate="$TASK_EXPIRED_DATE"
+                   camunda:priority="7"
+                   camunda:candidateGroups="hr,managers"
+                   camunda:candidateUsers="u1,u2">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="sign" label="Sign" type="string"/>
+        </camunda:formData>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="task_level">PRIMARY</camunda:inputParameter>
+          <camunda:inputParameter name="fail_expression">$sign == null</camunda:inputParameter>
+        </camunda:inputOutput>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:manualTask id="mt1" name="Pass through">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:manualTask>
+    <bpmn:endEvent id="end_ok" name="Done">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="end_kill" name="Terminate">
+      <bpmn:terminateEventDefinition/>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="ut1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="ut1" targetRef="mt1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="mt1" targetRef="end_ok"/>
+  </bpmn:process>
+</bpmn:definitions>

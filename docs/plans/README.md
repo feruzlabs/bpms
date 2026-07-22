@@ -40,6 +40,9 @@
 | 30 | `30-start-form-validation-business-key.md` | Start-forma validatsiyasi + business key (21 §2.1); 10/10 korpus sxema ishlatadi | 📝 kutilmoqda |
 | 31 | `31-human-workflow-usertask-manualtask.md` | Human-workflow: userTask/manualTask/terminateEnd/initiator (HR approval, regional_vacation) | 📝 kutilmoqda |
 
+| 32 | `32-remaining-bpmn-elements.md` | Qolgan 7 element: boundary/intermediateThrow/callActivity/subProcess/receive/sendTask/businessRuleTask | 📝 kutilmoqda |
+| 33 | `33-refactor-god-classes.md` | God-class refactor: ExecutionEngine (793)→NodeBehavior, JpaPersistenceAdapter (685)→port bo'yicha | 📝 kutilmoqda |
+
 > **ADR:** `docs/adr/ADR-001-execution-listeners-vs-service-tasks.md` — skript-listener + `bpms.*` vs service-task (qaror).
 > **Namuna:** `docs/examples/regional_vacation_bestpractice.bpmn` — HR protsesning best-practice refactor cloni.
 

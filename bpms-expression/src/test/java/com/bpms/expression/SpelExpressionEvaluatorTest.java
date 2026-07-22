@@ -57,6 +57,13 @@ class SpelExpressionEvaluatorTest {
         assertEquals("ok", eval.evaluate("credit.ping()", Map.of()));
     }
 
+    @Test
+    void dollarPrefixedVarEqualsNullWhenMissing() {
+        SpelExpressionEvaluator eval = new SpelExpressionEvaluator();
+        assertTrue(eval.evaluateLogic("$employee_sign == null", Map.of()));
+        assertFalse(eval.evaluateLogic("$employee_sign == null", Map.of("employee_sign", "ok")));
+    }
+
     public static final class CreditHelper {
         public String ping() {
             return "ok";

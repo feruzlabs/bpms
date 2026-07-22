@@ -62,11 +62,16 @@ class ProcessInstanceController {
     }
 
     @PostMapping
-    ResponseEntity<InstanceView> start(@RequestBody StartRequest request) {
+    ResponseEntity<InstanceView> start(
+            @RequestBody StartRequest request,
+            @RequestHeader(value = "X-User", required = false) String user) {
+        String startedBy = request.startedBy() != null && !request.startedBy().isBlank()
+                ? request.startedBy() : user;
         InstanceView view = engine.start(
                 request.definitionKey() != null ? request.definitionKey() : request.definitionId(),
                 request.businessKey(),
-                request.variables());
+                request.variables(),
+                startedBy);
         if (asyncStart) {
             return ResponseEntity.accepted().body(view); // 202 — RUNNING; poll GET
         }
@@ -86,7 +91,13 @@ class ProcessInstanceController {
         return execLog.byInstance(id, eventType);
     }
 
-    record StartRequest(String definitionKey, String definitionId, String businessKey, Map<String, Object> variables) {}
+    record StartRequest(
+            String definitionKey,
+            String definitionId,
+            String businessKey,
+            Map<String, Object> variables,
+            String startedBy
+    ) {}
 }
 
 @RestController
@@ -138,7 +149,18 @@ class TaskController {
         return engine.completeTask(id, request == null ? Map.of() : request.variables());
     }
 
+    @PostMapping("/{id}/claim")
+    InstanceView claim(
+            @PathVariable String id,
+            @RequestBody ClaimRequest request,
+            @RequestHeader(value = "X-User", required = false) String user) {
+        String assignee = request != null && request.assignee() != null && !request.assignee().isBlank()
+                ? request.assignee() : user;
+        return engine.claimTask(id, assignee);
+    }
+
     record CompleteRequest(Map<String, Object> variables) {}
+    record ClaimRequest(String assignee) {}
 }
 
 @RestControllerAdvice
@@ -151,6 +173,11 @@ class RuntimeErrorHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<?> invalid(RuntimeException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    ResponseEntity<?> conflict(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 
     @ExceptionHandler(com.bpms.server.service.StartFormValidationException.class)

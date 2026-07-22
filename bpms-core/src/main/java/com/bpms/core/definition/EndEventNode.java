@@ -10,4 +10,9 @@ public record EndEventNode(
         Optional<MultiInstanceSpec> multiInstance,
         List<ListenerSpec> listeners
 ) implements FlowNode {
+
+    /** True when the end event carries {@code terminateEventDefinition}. */
+    public boolean isTerminate() {
+        return eventDefinition.filter(TerminateEventDef.class::isInstance).isPresent();
+    }
 }

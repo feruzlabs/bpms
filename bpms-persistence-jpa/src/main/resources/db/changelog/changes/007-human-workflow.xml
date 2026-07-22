@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Task 31: camunda:initiator → process_instance.created_by -->
+    <changeSet id="007-human-workflow" author="bpms">
+        <sql><![CDATA[
+alter table process_instance add column if not exists created_by varchar(255);
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,8 +1,11 @@
 package com.bpms.parser.camunda;
 
 import com.bpms.core.definition.ConnectorImplementation;
+import com.bpms.core.definition.EndEventNode;
+import com.bpms.core.definition.ManualTaskNode;
 import com.bpms.core.definition.ParseResult;
 import com.bpms.core.definition.ServiceTaskNode;
+import com.bpms.core.definition.StartEventNode;
 import com.bpms.core.definition.UserTaskNode;
 import org.junit.jupiter.api.Test;
 
@@ -50,6 +53,42 @@ class CamundaCompatParserTest {
         assertEquals("5", fields.get(1).properties().get("max_size"));
         assertTrue(fields.get(1).properties().get("parameters").contains("parameter_name"));
         assertEquals("true", fields.get(1).validations().get("required"));
+    }
+
+    @Test
+    void parsesHumanWorkflowExtensions() throws Exception {
+        ParseResult result = parser.parse(read("fixtures/human-workflow.bpmn"));
+        assertFalse(result.hasWarnings());
+
+        StartEventNode start = result.definition().nodes().stream()
+                .filter(StartEventNode.class::isInstance)
+                .map(StartEventNode.class::cast)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("starterUser", start.initiator());
+
+        UserTaskNode ut = result.definition().nodes().stream()
+                .filter(UserTaskNode.class::isInstance)
+                .map(UserTaskNode.class::cast)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("EMPLOYEE__$employee__empId", ut.assignee());
+        assertEquals("$TASK_EXPIRED_DATE", ut.dueDate());
+        assertEquals("7", ut.priority());
+        assertEquals("hr,managers", ut.candidateGroups());
+        assertEquals("approve_form", ut.formData().orElseThrow().formKey());
+        assertEquals("task_level", ut.inputs().getFirst().name());
+        assertEquals("PRIMARY", ut.inputs().getFirst().value());
+
+        assertTrue(result.definition().nodes().stream().anyMatch(ManualTaskNode.class::isInstance));
+
+        EndEventNode terminate = result.definition().nodes().stream()
+                .filter(EndEventNode.class::isInstance)
+                .map(EndEventNode.class::cast)
+                .filter(EndEventNode::isTerminate)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("end_kill", terminate.id());
     }
 
     private static byte[] read(String classpath) throws Exception {

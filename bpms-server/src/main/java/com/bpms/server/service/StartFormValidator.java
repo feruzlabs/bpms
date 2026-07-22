@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Start-event form validation + type coercion (plan 30, old ValidationService/BpmExecutionService parity).
+ * Form validation + type coercion (plan 30 start forms; plan 31 userTask complete).
  * Form is embedded in BPMN — no separate DB table.
  */
 public final class StartFormValidator {
@@ -30,7 +30,14 @@ public final class StartFormValidator {
         if (formOpt.isEmpty() || formOpt.get().fields().isEmpty()) {
             return input == null ? Map.of() : Map.copyOf(input);
         }
-        FormDataSpec form = formOpt.get();
+        return validateAndCoerce(formOpt.get(), input);
+    }
+
+    /** Shared validator for start-form and userTask formData. */
+    public static Map<String, Object> validateAndCoerce(FormDataSpec form, Map<String, Object> input) {
+        if (form == null || form.fields().isEmpty()) {
+            return input == null ? Map.of() : copyAllowingNull(input);
+        }
         Map<String, Object> raw = input == null ? Map.of() : input;
         Map<String, Object> coerced = new LinkedHashMap<>();
         List<StartFormValidationException.FieldError> errors = new ArrayList<>();
@@ -43,6 +50,10 @@ public final class StartFormValidator {
             if (isBlank(value)) {
                 if (isRequired(field, form.businessKeyVar())) {
                     errors.add(new StartFormValidationException.FieldError(field.id(), "required"));
+                } else {
+                    // Explicit null so gateway conditions like {@code sign == null} evaluate true
+                    // (missing map keys fail SpEL → false under the old-engine heuristic).
+                    coerced.put(field.id(), null);
                 }
                 continue;
             }
@@ -56,7 +67,11 @@ public final class StartFormValidator {
         if (!errors.isEmpty()) {
             throw new StartFormValidationException(errors);
         }
-        return Map.copyOf(coerced);
+        return coerced;
+    }
+
+    private static Map<String, Object> copyAllowingNull(Map<String, Object> input) {
+        return new LinkedHashMap<>(input);
     }
 
     static boolean isRequired(FormFieldSpec field, String businessKeyVar) {
