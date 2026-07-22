@@ -10,9 +10,9 @@ import org.springframework.stereotype.Component;
  * these checks look at persisted history across async boundaries (whole-instance revisit counts, subprocess
  * recursion depth, and how many instances a single root has spawned).
  *
- * <p>{@link #checkSpawnDepthBeforeStart} is meant to be called on the instance-creation path (e.g. a
- * call-activity spawning a child). Full call-activity child spawning is not wired in the engine yet — method is
- * <b>dormant</b> (plan 29); do not call until call-activity spawn lands.
+ * <p>{@link #checkSpawnDepthBeforeStart} is called on the instance-creation path — wired via
+ * {@code SpawnGuardPort} from {@code CallActivityBehavior} on every callActivity spawn (plan 34 Phase 1;
+ * previously dormant per plan 29).
  */
 @Component
 public class RunawayGuard {
@@ -71,9 +71,6 @@ public class RunawayGuard {
     /**
      * Guard before spawning a child instance. Throws {@link RunawayBlockedException} (and opens an incident)
      * when recursion depth or the per-root spawn cap would be exceeded — this stops recursive spawn.
-     *
-     * <p>DORMANT until call-activity child spawn is wired in the engine.
-     * TODO: wire on call-activity spawn (plan 28+).
      */
     public void checkSpawnDepthBeforeStart(String parentInstanceId, String rootInstanceId) {
         if (parentInstanceId != null) {

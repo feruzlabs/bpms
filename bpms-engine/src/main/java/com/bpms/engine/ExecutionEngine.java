@@ -3,7 +3,6 @@ package com.bpms.engine;
 import com.bpms.core.definition.BoundaryEventNode;
 import com.bpms.core.definition.BusinessRuleTaskNode;
 import com.bpms.core.definition.CallActivityNode;
-import com.bpms.core.definition.ConnectorImplementation;
 import com.bpms.core.definition.EndEventNode;
 import com.bpms.core.definition.ExclusiveGatewayNode;
 import com.bpms.core.definition.FlowNode;
@@ -26,9 +25,14 @@ import com.bpms.core.definition.StartEventNode;
 import com.bpms.core.definition.SubProcessNode;
 import com.bpms.core.definition.TaskNode;
 import com.bpms.core.definition.UserTaskNode;
+import com.bpms.engine.behavior.ExecutionContext;
+import com.bpms.engine.behavior.NodeBehavior;
+import com.bpms.engine.behavior.NodeBehaviorRegistry;
+import com.bpms.engine.behavior.NodeResult;
 import com.bpms.expression.HumanTaskExpressions;
 import com.bpms.spi.connector.ConnectorContext;
 import com.bpms.spi.connector.ConnectorResult;
+import com.bpms.spi.engine.RuntimeModels.EventSubscriptionRecord;
 import com.bpms.spi.engine.RuntimeModels.InstanceRecord;
 import com.bpms.spi.engine.RuntimeModels.InstanceStatus;
 import com.bpms.spi.engine.RuntimeModels.JobRecord;
@@ -38,6 +42,8 @@ import com.bpms.spi.engine.RuntimeModels.TokenStatus;
 import com.bpms.spi.engine.RuntimeModels.UserTaskRecord;
 import com.bpms.spi.expression.ExpressionEvaluator;
 import com.bpms.spi.port.ClockPort;
+import com.bpms.spi.port.DefinitionLookupPort;
+import com.bpms.spi.port.EventSubscriptionPort;
 import com.bpms.spi.port.ExecutionLogPort;
 import com.bpms.spi.port.ExecutionLogPort.LogEntry;
 import com.bpms.spi.port.IncidentPort;
@@ -46,16 +52,17 @@ import com.bpms.spi.port.JobQueuePort;
 import com.bpms.spi.port.JobRepositoryPort;
 import com.bpms.spi.port.ListenerLogPort;
 import com.bpms.spi.port.ListenerLogPort.ListenerLogEntry;
+import com.bpms.spi.port.SpawnGuardPort;
 import com.bpms.spi.port.TaskRepositoryPort;
 import com.bpms.spi.port.TerminationSignal;
 import com.bpms.spi.port.TokenRepositoryPort;
 import com.bpms.spi.port.TokenStatePort;
 import com.bpms.spi.port.VariableStorePort;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -84,6 +91,10 @@ public final class ExecutionEngine {
     private final IncidentPort incidents;
     private final int maxStepsPerRun;
     private final int maxNodeRevisitsPerRun;
+    private final NodeBehaviorRegistry behaviors;
+    private final DefinitionLookupPort definitionLookup;
+    private final SpawnGuardPort spawnGuard;
+    private final EventSubscriptionPort eventSubscriptions;
 
     /** Absolute cap on transitions within one {@code run()} — guarantees any synchronous loop is cut (plan 27 §3b). */
     public static final int DEFAULT_MAX_STEPS_PER_RUN = 10_000;
@@ -108,7 +119,10 @@ public final class ExecutionEngine {
             TerminationSignal termination,
             IncidentPort incidents,
             int maxStepsPerRun,
-            int maxNodeRevisitsPerRun
+            int maxNodeRevisitsPerRun,
+            DefinitionLookupPort definitionLookup,
+            SpawnGuardPort spawnGuard,
+            EventSubscriptionPort eventSubscriptions
     ) {
         this.connectors = connectors;
         this.expressions = expressions;
@@ -128,6 +142,64 @@ public final class ExecutionEngine {
         this.incidents = Objects.requireNonNullElse(incidents, IncidentPort.NOOP);
         this.maxStepsPerRun = maxStepsPerRun > 0 ? maxStepsPerRun : DEFAULT_MAX_STEPS_PER_RUN;
         this.maxNodeRevisitsPerRun = maxNodeRevisitsPerRun > 0 ? maxNodeRevisitsPerRun : DEFAULT_MAX_NODE_REVISITS_PER_RUN;
+        this.definitionLookup = Objects.requireNonNullElse(definitionLookup, DefinitionLookupPort.EMPTY);
+        this.spawnGuard = Objects.requireNonNullElse(spawnGuard, SpawnGuardPort.NOOP);
+        this.eventSubscriptions = Objects.requireNonNullElse(eventSubscriptions, EventSubscriptionPort.NOOP);
+        this.behaviors = NodeBehaviorRegistry.defaults();
+    }
+
+    /** Backward-compatible overload: no TIMER/MESSAGE/SIGNAL event-subscription wiring (plan 32 Phase 2 — defaults to a no-op port). */
+    public ExecutionEngine(
+            ConnectorRegistry connectors,
+            ExpressionEvaluator expressions,
+            InstanceRepositoryPort instances,
+            TokenRepositoryPort tokens,
+            VariableStorePort variables,
+            TaskRepositoryPort tasks,
+            JobRepositoryPort jobs,
+            JobQueuePort jobQueue,
+            ClockPort clock,
+            boolean asyncServiceTasks,
+            ObjectMapper json,
+            ExecutionLogPort execLog,
+            TokenStatePort tokenState,
+            ListenerLogPort listenerLog,
+            TerminationSignal termination,
+            IncidentPort incidents,
+            int maxStepsPerRun,
+            int maxNodeRevisitsPerRun,
+            DefinitionLookupPort definitionLookup,
+            SpawnGuardPort spawnGuard
+    ) {
+        this(connectors, expressions, instances, tokens, variables, tasks, jobs, jobQueue,
+                clock, asyncServiceTasks, json, execLog, tokenState, listenerLog,
+                termination, incidents, maxStepsPerRun, maxNodeRevisitsPerRun, definitionLookup, spawnGuard, null);
+    }
+
+    /** Backward-compatible overload: no callActivity spawn wiring (definitionLookup/spawnGuard default to no-op). */
+    public ExecutionEngine(
+            ConnectorRegistry connectors,
+            ExpressionEvaluator expressions,
+            InstanceRepositoryPort instances,
+            TokenRepositoryPort tokens,
+            VariableStorePort variables,
+            TaskRepositoryPort tasks,
+            JobRepositoryPort jobs,
+            JobQueuePort jobQueue,
+            ClockPort clock,
+            boolean asyncServiceTasks,
+            ObjectMapper json,
+            ExecutionLogPort execLog,
+            TokenStatePort tokenState,
+            ListenerLogPort listenerLog,
+            TerminationSignal termination,
+            IncidentPort incidents,
+            int maxStepsPerRun,
+            int maxNodeRevisitsPerRun
+    ) {
+        this(connectors, expressions, instances, tokens, variables, tasks, jobs, jobQueue,
+                clock, asyncServiceTasks, json, execLog, tokenState, listenerLog,
+                termination, incidents, maxStepsPerRun, maxNodeRevisitsPerRun, null, null);
     }
 
     /** Backward-compatible overload: no cooperative stop / incidents, default budgets. */
@@ -191,6 +263,72 @@ public final class ExecutionEngine {
                 NoOpTokenStatePort.INSTANCE, NoOpListenerLogPort.INSTANCE);
     }
 
+    // -- accessors for com.bpms.engine.behavior.ExecutionContext (plan 33 Phase 0) -------------------
+
+    public ConnectorRegistry connectors() {
+        return connectors;
+    }
+
+    public ExpressionEvaluator expressions() {
+        return expressions;
+    }
+
+    public InstanceRepositoryPort instances() {
+        return instances;
+    }
+
+    public TokenRepositoryPort tokens() {
+        return tokens;
+    }
+
+    public VariableStorePort variables() {
+        return variables;
+    }
+
+    public TaskRepositoryPort tasks() {
+        return tasks;
+    }
+
+    public JobRepositoryPort jobs() {
+        return jobs;
+    }
+
+    public JobQueuePort jobQueue() {
+        return jobQueue;
+    }
+
+    public ClockPort clock() {
+        return clock;
+    }
+
+    public boolean asyncServiceTasks() {
+        return asyncServiceTasks;
+    }
+
+    public ObjectMapper json() {
+        return json;
+    }
+
+    public ExecutionLogPort execLog() {
+        return execLog;
+    }
+
+    public TokenStatePort tokenState() {
+        return tokenState;
+    }
+
+    public DefinitionLookupPort definitionLookup() {
+        return definitionLookup;
+    }
+
+    public SpawnGuardPort spawnGuard() {
+        return spawnGuard;
+    }
+
+    public EventSubscriptionPort eventSubscriptions() {
+        return eventSubscriptions;
+    }
+
     public void run(ProcessDefinition definition, TokenRecord token, String businessKey) {
         TokenRecord current = token;
         int steps = 0;
@@ -227,201 +365,60 @@ public final class ExecutionEngine {
             try {
                 fireListeners(node, stateId, "BEFORE", vars, at.instanceId(), nodeId);
 
-                if (node instanceof EndEventNode end) {
-                    if (end.isTerminate()) {
-                        completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                        terminateInstance(at.instanceId());
+                ExecutionContext ctx = new ExecutionContext(this, definition, node, at, businessKey, vars, stateId, enteredAt);
+                NodeBehavior<FlowNode> behavior = behaviors.get(node);
+                NodeResult result = behavior.execute(node, ctx);
+
+                switch (result) {
+                    case NodeResult.Waiting w -> {
                         return;
                     }
-                    completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                    close(at);
-                    return;
-                }
-
-                if (node instanceof UserTaskNode user) {
-                    applyIoInputs(user.inputs(), at.instanceId(), vars);
-                    vars = variables.getAll(at.instanceId());
-                    String assignee = HumanTaskExpressions.resolveAssignee(user.assignee(), expressions, vars);
-                    Instant due = HumanTaskExpressions.resolveDueDate(user.dueDate(), expressions, vars);
-                    int priority = HumanTaskExpressions.resolvePriority(user.priority(), expressions, vars);
-                    String formKey = user.formData().map(f -> f.formKey()).orElse(null);
-                    tokens.save(new TokenRecord(at.id(), at.instanceId(), at.currentNodeId(), TokenStatus.WAITING, null));
-                    instances.save(withStatus(at.instanceId(), InstanceStatus.WAITING));
-                    tasks.save(new UserTaskRecord(
-                            UUID.randomUUID().toString(), at.instanceId(), at.id(),
-                            user.id(), user.name(),
-                            assignee,
-                            HumanTaskExpressions.resolveCsv(user.candidateGroups(), expressions, vars),
-                            HumanTaskExpressions.resolveCsv(user.candidateUsers(), expressions, vars),
-                            due, priority, formKey, null, null,
-                            false, clock.now(), null));
-                    // Keep token_state ACTIVE until completeTask (same pattern as WAITING_JOB).
-                    return;
-                }
-
-                if (node instanceof ManualTaskNode manual) {
-                    applyIoInputs(manual.inputs(), at.instanceId(), vars);
-                    vars = variables.getAll(at.instanceId());
-                    // pass-through — fall through to outgoing advance; outputs applied below after advance prep
-                }
-
-                if (node instanceof ParallelGatewayNode) {
-                    List<SequenceFlow> incoming = definition.flows().stream()
-                            .filter(f -> node.id().equals(f.targetRef()))
-                            .toList();
-                    List<SequenceFlow> outgoingParallel = definition.outgoing(node.id());
-                    if (incoming.size() > 1) {
-                        String joinKey = "_join_" + node.id();
-                        int arrived = ((Number) vars.getOrDefault(joinKey, 0)).intValue() + 1;
-                        variables.putAll(at.instanceId(), Map.of(joinKey, arrived));
-                        tokens.save(new TokenRecord(at.id(), at.instanceId(), node.id(), TokenStatus.COMPLETED, null));
-                        if (arrived < incoming.size()) {
-                            completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                            return;
-                        }
-                        variables.putAll(at.instanceId(), Map.of(joinKey, 0));
-                        if (outgoingParallel.isEmpty()) {
-                            completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                            maybeCompleteInstance(at.instanceId());
-                            return;
-                        }
-                        completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                        current = new TokenRecord(
-                                UUID.randomUUID().toString(), at.instanceId(),
-                                outgoingParallel.getFirst().targetRef(), TokenStatus.ACTIVE, null);
-                        tokens.save(current);
-                        continue;
+                    case NodeResult.Finished f -> {
+                        return;
                     }
-                    if (outgoingParallel.size() > 1) {
-                        for (int i = 1; i < outgoingParallel.size(); i++) {
-                            tokens.save(new TokenRecord(
-                                    UUID.randomUUID().toString(), at.instanceId(),
-                                    outgoingParallel.get(i).targetRef(), TokenStatus.ACTIVE, null));
-                        }
-                        current = new TokenRecord(
-                                at.id(), at.instanceId(),
-                                outgoingParallel.getFirst().targetRef(), TokenStatus.ACTIVE, null);
-                        tokens.save(current);
-                        completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                        for (int i = 1; i < outgoingParallel.size(); i++) {
-                            final String siblingNode = outgoingParallel.get(i).targetRef();
-                            TokenRecord sibling = tokens.findByInstanceId(at.instanceId()).stream()
-                                    .filter(t -> siblingNode.equals(t.currentNodeId()) && t.status() == TokenStatus.ACTIVE)
-                                    .findFirst()
-                                    .orElseThrow();
+                    case NodeResult.Continue c -> current = c.next();
+                    case NodeResult.ContinueWithSiblings cs -> {
+                        current = cs.next();
+                        for (TokenRecord sibling : cs.siblings()) {
                             run(definition, sibling, businessKey);
                         }
-                        continue;
+                    }
+                    case NodeResult.TakeFlows tf -> {
+                        List<SequenceFlow> outgoing = tf.flows();
+                        Map<String, Object> finalVars = ctx.vars();
+                        if (outgoing.isEmpty()) {
+                            completeNodeState(stateId, node, finalVars, at.instanceId(), nodeId, enteredAt);
+                            close(at);
+                            return;
+                        }
+                        if (outgoing.size() > 1) {
+                            completeNodeState(stateId, node, finalVars, at.instanceId(), nodeId, enteredAt);
+                            for (int i = 1; i < outgoing.size(); i++) {
+                                tokens.save(new TokenRecord(
+                                        UUID.randomUUID().toString(), at.instanceId(),
+                                        outgoing.get(i).targetRef(), TokenStatus.ACTIVE, at.parentMultiInstanceId()));
+                            }
+                            current = new TokenRecord(
+                                    at.id(), at.instanceId(),
+                                    outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, at.parentMultiInstanceId());
+                            tokens.save(current);
+                            for (int i = 1; i < outgoing.size(); i++) {
+                                final String siblingNode = outgoing.get(i).targetRef();
+                                TokenRecord sibling = tokens.findByInstanceId(at.instanceId()).stream()
+                                        .filter(t -> siblingNode.equals(t.currentNodeId()) && t.status() == TokenStatus.ACTIVE)
+                                        .findFirst()
+                                        .orElseThrow();
+                                run(definition, sibling, businessKey);
+                            }
+                        } else {
+                            completeNodeState(stateId, node, finalVars, at.instanceId(), nodeId, enteredAt);
+                            current = new TokenRecord(
+                                    at.id(), at.instanceId(),
+                                    outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, at.parentMultiInstanceId());
+                            tokens.save(current);
+                        }
                     }
                 }
-
-                if (node instanceof ServiceTaskNode service && service.implementation() instanceof ConnectorImplementation ci) {
-                    Map<String, Object> inputs = new HashMap<>();
-                    for (IoParameter p : ci.binding().inputs()) {
-                        inputs.put(p.name(), expressions.evaluate(p.value(), vars));
-                    }
-                    if (asyncServiceTasks) {
-                        enqueueServiceTask(at, businessKey, ci.binding().connectorId(), inputs);
-                        return;
-                    }
-                    executeConnector(at, businessKey, ci.binding().connectorId(), inputs);
-                    vars = variables.getAll(at.instanceId());
-                }
-
-                if (node instanceof ScriptTaskNode script && script.script() != null) {
-                    Object result = expressions.evaluate(script.script(), vars);
-                    if (script.resultVariable() != null && !script.resultVariable().isBlank()) {
-                        variables.putAll(at.instanceId(), Map.of(script.resultVariable(), result));
-                    }
-                }
-
-                if (node instanceof ManualTaskNode manual) {
-                    applyIoOutputs(manual.outputs(), at.instanceId(), variables.getAll(at.instanceId()));
-                    vars = variables.getAll(at.instanceId());
-                }
-
-                final Map<String, Object> evalVars = vars;
-                List<SequenceFlow> outgoing = new ArrayList<>(definition.outgoing(node.id()));
-                if (node instanceof ExclusiveGatewayNode gateway) {
-                    List<SequenceFlow> conditional = outgoing.stream()
-                            .filter(f -> f.condition().isPresent()
-                                    && expressions.evaluateLogic(f.condition().get().expression(), evalVars))
-                            .toList();
-                    boolean usedDefault;
-                    if (!conditional.isEmpty()) {
-                        outgoing = List.of(conditional.getFirst());
-                        usedDefault = false;
-                    } else {
-                        List<SequenceFlow> outgoingFlows = outgoing;
-                        SequenceFlow fallback = outgoing.stream()
-                                .filter(f -> f.id().equals(gateway.defaultFlowId()))
-                                .findFirst()
-                                .or(() -> outgoingFlows.stream()
-                                        .filter(f -> f.condition().isEmpty())
-                                        .findFirst())
-                                .orElse(null);
-                        outgoing = fallback == null ? List.of() : List.of(fallback);
-                        usedDefault = fallback != null;
-                    }
-                    if (!outgoing.isEmpty()) {
-                        logGateway(at, gateway, outgoing.getFirst(), conditional, usedDefault);
-                    }
-                }
-
-                if (node instanceof InclusiveGatewayNode gateway) {
-                    List<SequenceFlow> conditional = outgoing.stream()
-                            .filter(f -> f.condition().isPresent()
-                                    && expressions.evaluateLogic(f.condition().get().expression(), evalVars))
-                            .toList();
-                    if (!conditional.isEmpty()) {
-                        outgoing = conditional;
-                    } else {
-                        List<SequenceFlow> outgoingFlows = outgoing;
-                        SequenceFlow fallback = outgoing.stream()
-                                .filter(f -> f.id().equals(gateway.defaultFlowId()))
-                                .findFirst()
-                                .or(() -> outgoingFlows.stream()
-                                        .filter(f -> f.condition().isEmpty())
-                                        .findFirst())
-                                .orElse(null);
-                        outgoing = fallback == null ? List.of() : List.of(fallback);
-                    }
-                }
-
-                if (outgoing.isEmpty()) {
-                    completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                    close(at);
-                    return;
-                }
-
-                // Inclusive fork (plan 22): all true conditional branches get a token (not just the first).
-                if (node instanceof InclusiveGatewayNode && outgoing.size() > 1) {
-                    completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                    for (int i = 1; i < outgoing.size(); i++) {
-                        tokens.save(new TokenRecord(
-                                UUID.randomUUID().toString(), at.instanceId(),
-                                outgoing.get(i).targetRef(), TokenStatus.ACTIVE, null));
-                    }
-                    current = new TokenRecord(
-                            at.id(), at.instanceId(),
-                            outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
-                    tokens.save(current);
-                    for (int i = 1; i < outgoing.size(); i++) {
-                        final String siblingNode = outgoing.get(i).targetRef();
-                        TokenRecord sibling = tokens.findByInstanceId(at.instanceId()).stream()
-                                .filter(t -> siblingNode.equals(t.currentNodeId()) && t.status() == TokenStatus.ACTIVE)
-                                .findFirst()
-                                .orElseThrow();
-                        run(definition, sibling, businessKey);
-                    }
-                    continue;
-                }
-
-                completeNodeState(stateId, node, vars, at.instanceId(), nodeId, enteredAt);
-                current = new TokenRecord(
-                        at.id(), at.instanceId(),
-                        outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
-                tokens.save(current);
             } catch (RuntimeException e) {
                 tokenState.exit(stateId, "FAILED", clock.now(), durationMs(enteredAt), e.getMessage());
                 throw e;
@@ -437,6 +434,8 @@ public final class ExecutionEngine {
             applyIoOutputs(user.outputs(), waitingToken.instanceId(), vars);
             vars = variables.getAll(waitingToken.instanceId());
         }
+        // plan 32 Phase 3: the activity finished on its own — any boundary timer/message/signal watching it is moot.
+        eventSubscriptions.deleteByInstanceAndNode(waitingToken.instanceId(), node.id());
         tokenState.activeStateId(waitingToken.id(), node.id()).ifPresent(stateId -> {
             try {
                 fireListeners(node, stateId, "AFTER", variables.getAll(waitingToken.instanceId()),
@@ -452,19 +451,19 @@ public final class ExecutionEngine {
         if (outgoing.isEmpty()) {
             close(new TokenRecord(
                     waitingToken.id(), waitingToken.instanceId(), waitingToken.currentNodeId(),
-                    TokenStatus.ACTIVE, null));
+                    TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId()));
             return;
         }
         TokenRecord next = new TokenRecord(
                 waitingToken.id(), waitingToken.instanceId(),
-                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
+                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId());
         tokens.save(next);
         instances.save(withStatus(waitingToken.instanceId(), InstanceStatus.RUNNING));
         run(definition, next, businessKey);
     }
 
     /** BPMN terminateEndEvent: cancel every live token and complete the instance (≠ admin TERMINATE). */
-    private void terminateInstance(String instanceId) {
+    public void terminateInstance(String instanceId) {
         for (TokenRecord t : tokens.findByInstanceId(instanceId)) {
             if (t.status() == TokenStatus.ACTIVE
                     || t.status() == TokenStatus.WAITING
@@ -477,11 +476,11 @@ public final class ExecutionEngine {
         InstanceRecord old = instances.findInstanceById(instanceId).orElseThrow();
         instances.save(new InstanceRecord(
                 old.id(), old.definitionId(), old.businessKey(), InstanceStatus.COMPLETED,
-                old.createdAt(), clock.now(), old.createdBy()));
+                old.createdAt(), clock.now(), old.createdBy(), old.parentInstanceId(), old.rootInstanceId()));
         execLog.log(instanceEnd(instanceId, "OK", "terminateEndEvent"));
     }
 
-    private void applyIoInputs(List<IoParameter> inputs, String instanceId, Map<String, Object> vars) {
+    public void applyIoInputs(List<IoParameter> inputs, String instanceId, Map<String, Object> vars) {
         if (inputs == null || inputs.isEmpty()) {
             return;
         }
@@ -503,12 +502,47 @@ public final class ExecutionEngine {
         }
     }
 
-    private void applyIoOutputs(List<IoParameter> outputs, String instanceId, Map<String, Object> vars) {
+    public void applyIoOutputs(List<IoParameter> outputs, String instanceId, Map<String, Object> vars) {
         applyIoInputs(outputs, instanceId, vars);
     }
 
     /** Called by JobQueue consumers after a serviceTask job finishes connector work. */
     public void continueAfterServiceTask(ProcessDefinition definition, TokenRecord waitingToken, String businessKey) {
+        FlowNode node = definition.node(waitingToken.currentNodeId()).orElseThrow();
+        Map<String, Object> vars = variables.getAll(waitingToken.instanceId());
+        eventSubscriptions.deleteByInstanceAndNode(waitingToken.instanceId(), node.id());
+        tokenState.activeStateId(waitingToken.id(), node.id()).ifPresent(stateId -> {
+            try {
+                fireListeners(node, stateId, "AFTER", vars, waitingToken.instanceId(), node.id());
+                tokenState.exit(stateId, "COMPLETED", clock.now(), null, null);
+            } catch (RuntimeException e) {
+                tokenState.exit(stateId, "FAILED", clock.now(), null, e.getMessage());
+                throw e;
+            }
+        });
+
+        List<SequenceFlow> outgoing = definition.outgoing(node.id());
+        if (outgoing.isEmpty()) {
+            close(new TokenRecord(
+                    waitingToken.id(), waitingToken.instanceId(), waitingToken.currentNodeId(),
+                    TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId()));
+            return;
+        }
+        TokenRecord next = new TokenRecord(
+                waitingToken.id(), waitingToken.instanceId(),
+                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId());
+        tokens.save(next);
+        instances.save(withStatus(waitingToken.instanceId(), InstanceStatus.RUNNING));
+        run(definition, next, businessKey);
+    }
+
+    /**
+     * Called after a timer/message/signal event catch (intermediate catch, {@code receiveTask}) has been
+     * resolved externally — fires AFTER listeners and advances, exactly like {@link #continueAfterServiceTask}
+     * (plan 32 Phase 2). The event's own subscription must already have been deleted by the caller
+     * ({@link #resumeEventSubscription}) — this method only moves the token forward.
+     */
+    public void continueAfterEvent(ProcessDefinition definition, TokenRecord waitingToken, String businessKey) {
         FlowNode node = definition.node(waitingToken.currentNodeId()).orElseThrow();
         Map<String, Object> vars = variables.getAll(waitingToken.instanceId());
         tokenState.activeStateId(waitingToken.id(), node.id()).ifPresent(stateId -> {
@@ -525,15 +559,157 @@ public final class ExecutionEngine {
         if (outgoing.isEmpty()) {
             close(new TokenRecord(
                     waitingToken.id(), waitingToken.instanceId(), waitingToken.currentNodeId(),
-                    TokenStatus.ACTIVE, null));
+                    TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId()));
             return;
         }
         TokenRecord next = new TokenRecord(
                 waitingToken.id(), waitingToken.instanceId(),
-                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, null);
+                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId());
         tokens.save(next);
         instances.save(withStatus(waitingToken.instanceId(), InstanceStatus.RUNNING));
         run(definition, next, businessKey);
+    }
+
+    /** Parks {@code token} WAITING on a timer/message/signal catch — mirrors userTask's WAITING convention (plan 32 Phase 2). */
+    public void parkTokenWaiting(TokenRecord token) {
+        tokens.save(new TokenRecord(
+                token.id(), token.instanceId(), token.currentNodeId(), TokenStatus.WAITING, token.parentMultiInstanceId()));
+        instances.save(withStatus(token.instanceId(), InstanceStatus.WAITING));
+    }
+
+    /**
+     * Resolves a single {@code event_subscription} by id — the one entry point used by {@code
+     * TimerJobHandler}, {@link #correlateMessage} and {@link #broadcastSignal} to wake whatever is
+     * waiting on it (plan 32 Phases 2/3). Routes to {@link #fireBoundaryEvent} when the subscription was
+     * registered by {@code BoundarySupport} (its {@code configJson} carries {@code "boundary":true});
+     * otherwise treats it as a plain intermediate-catch/{@code receiveTask} wait and calls
+     * {@link #continueAfterEvent}. A missing subscription (already fired/canceled) is a silent no-op —
+     * callers (job retries, duplicate correlate calls) must be idempotent.
+     */
+    public void resumeEventSubscription(String subscriptionId, Map<String, Object> extraVars) {
+        EventSubscriptionRecord sub = eventSubscriptions.findById(subscriptionId).orElse(null);
+        if (sub == null) {
+            return;
+        }
+        Map<String, Object> config = readConfig(sub.configJson());
+        if (Boolean.TRUE.equals(config.get("boundary"))) {
+            fireBoundaryEvent(sub, extraVars);
+            return;
+        }
+
+        eventSubscriptions.deleteById(sub.id());
+        InstanceRecord instance = instances.findInstanceById(sub.instanceId()).orElse(null);
+        if (instance == null) {
+            return;
+        }
+        if (extraVars != null && !extraVars.isEmpty()) {
+            variables.putAll(sub.instanceId(), extraVars);
+        }
+        TokenRecord token = tokens.findTokenById(sub.tokenId()).orElse(null);
+        if (token == null || token.status() == TokenStatus.CANCELED || token.status() == TokenStatus.COMPLETED) {
+            return; // stale fire — the token already moved on (e.g. instance terminated concurrently)
+        }
+        ProcessDefinition def = definitionLookup.findDefinitionById(instance.definitionId())
+                .orElseThrow(() -> new IllegalStateException("No definition for instance " + sub.instanceId()));
+        continueAfterEvent(def, token, instance.businessKey());
+    }
+
+    /** Correlates a MESSAGE (1:1 catch — but every currently-open matching subscription is resumed; no businessKey filter yet). */
+    public int correlateMessage(String messageName, Map<String, Object> vars) {
+        return resumeAllMatching("MESSAGE", messageName, vars);
+    }
+
+    /** Broadcasts a SIGNAL — every open matching subscription is resumed (unlike message correlation, this is intentionally 1:N). */
+    public int broadcastSignal(String signalName, Map<String, Object> vars) {
+        return resumeAllMatching("SIGNAL", signalName, vars);
+    }
+
+    private int resumeAllMatching(String type, String name, Map<String, Object> vars) {
+        List<EventSubscriptionRecord> subs = eventSubscriptions.findOpenByTypeAndName(type, name);
+        for (EventSubscriptionRecord sub : subs) {
+            resumeEventSubscription(sub.id(), vars);
+        }
+        return subs.size();
+    }
+
+    /**
+     * Fires a boundary event subscription (plan 32 Phase 3): {@code sub.tokenId()} is the activity's own
+     * token (still parked there), {@code sub.nodeId()} is the attached activity's id, and {@code
+     * sub.configJson()} carries the boundary event's own node id + its {@code cancelActivity} flag (set by
+     * {@code BoundarySupport} when the activity was entered).
+     *
+     * <ul>
+     *   <li><b>Interrupting:</b> the activity token is CANCELED, every other boundary subscription for the
+     *       same activity token is dropped (they no longer apply), any open userTask tied to that token is
+     *       completed, and a NEW token is placed on the boundary node and run — takes the boundary's own
+     *       outgoing flows via {@code BoundaryEventBehavior} (TakeFlows).</li>
+     *   <li><b>Non-interrupting:</b> the activity token is left untouched; a sibling token is placed on the
+     *       boundary node and run — the activity keeps executing on its own token.</li>
+     * </ul>
+     */
+    public void fireBoundaryEvent(EventSubscriptionRecord sub, Map<String, Object> extraVars) {
+        InstanceRecord instance = instances.findInstanceById(sub.instanceId()).orElse(null);
+        if (instance == null) {
+            eventSubscriptions.deleteById(sub.id());
+            return;
+        }
+        ProcessDefinition def = definitionLookup.findDefinitionById(instance.definitionId())
+                .orElseThrow(() -> new IllegalStateException("No definition for instance " + sub.instanceId()));
+
+        Map<String, Object> config = readConfig(sub.configJson());
+        String boundaryNodeId = String.valueOf(config.getOrDefault("boundaryNodeId", sub.nodeId()));
+        boolean interrupting = Boolean.TRUE.equals(config.get("interrupting"));
+        BoundaryEventNode boundary = def.node(boundaryNodeId)
+                .filter(BoundaryEventNode.class::isInstance)
+                .map(BoundaryEventNode.class::cast)
+                .orElseThrow(() -> new IllegalStateException("Boundary node not found: " + boundaryNodeId));
+
+        TokenRecord activityToken = tokens.findTokenById(sub.tokenId()).orElse(null);
+        if (activityToken == null || activityToken.status() == TokenStatus.CANCELED
+                || activityToken.status() == TokenStatus.COMPLETED) {
+            eventSubscriptions.deleteById(sub.id());
+            return; // stale fire — the activity already finished/was canceled another way
+        }
+
+        if (extraVars != null && !extraVars.isEmpty()) {
+            variables.putAll(sub.instanceId(), extraVars);
+        }
+
+        eventSubscriptions.deleteById(sub.id());
+        if (interrupting) {
+            eventSubscriptions.findSubscriptionsByInstanceId(sub.instanceId()).stream()
+                    .filter(s -> sub.tokenId().equals(s.tokenId()))
+                    .forEach(s -> eventSubscriptions.deleteById(s.id()));
+            tasks.completeOpenTaskForToken(activityToken.id(), clock.now());
+            tokens.save(new TokenRecord(
+                    activityToken.id(), activityToken.instanceId(), activityToken.currentNodeId(),
+                    TokenStatus.CANCELED, activityToken.parentMultiInstanceId()));
+            TokenRecord rerouted = new TokenRecord(
+                    UUID.randomUUID().toString(), sub.instanceId(), boundary.id(), TokenStatus.ACTIVE,
+                    activityToken.parentMultiInstanceId());
+            tokens.save(rerouted);
+            instances.save(withStatus(sub.instanceId(), InstanceStatus.RUNNING));
+            run(def, rerouted, instance.businessKey());
+        } else {
+            TokenRecord sibling = new TokenRecord(
+                    UUID.randomUUID().toString(), sub.instanceId(), boundary.id(), TokenStatus.ACTIVE,
+                    activityToken.parentMultiInstanceId());
+            tokens.save(sibling);
+            instances.save(withStatus(sub.instanceId(), InstanceStatus.RUNNING));
+            run(def, sibling, instance.businessKey());
+        }
+    }
+
+    /** Best-effort JSON→Map decode for {@code EventSubscriptionRecord.configJson()} — never throws (missing/invalid config ⇒ empty map). */
+    private Map<String, Object> readConfig(String configJson) {
+        if (configJson == null || configJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return json.readValue(configJson, new TypeReference<>() {});
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     public void executeConnector(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
@@ -577,7 +753,49 @@ public final class ExecutionEngine {
                 details(inputs, result.outputs()), durationMs(t0), clock.now()));
     }
 
-    private void enqueueServiceTask(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
+    /**
+     * Like {@link #executeConnector} but never calls {@link #markFailed}/throws on failure — returns the
+     * error message instead (or {@code null} on success) so the caller can decide what to do (plan 32
+     * Phase 3: {@code ServiceTaskBehavior} uses this when an {@code errorEventDefinition} boundary is
+     * attached, rerouting to the boundary flow instead of failing the token).
+     */
+    public String tryExecuteConnector(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
+        Instant t0 = clock.now();
+        execLog.log(new LogEntry(
+                token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                "CONNECTOR_START", null, null,
+                Map.of("inputs", safeMap(inputs)), null, clock.now()));
+
+        Map<String, Object> vars = variables.getAll(token.instanceId());
+        ConnectorResult result;
+        try {
+            result = connectors.required(connectorId)
+                    .execute(new ConnectorContext(businessKey, vars, inputs));
+        } catch (Exception e) {
+            execLog.log(new LogEntry(
+                    token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                    "CONNECTOR_ERROR", "FAIL", e.getMessage(),
+                    details(inputs, null), durationMs(t0), clock.now()));
+            return e.getMessage() == null ? "connector error" : e.getMessage();
+        }
+
+        if (!result.success()) {
+            execLog.log(new LogEntry(
+                    token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                    "CONNECTOR_ERROR", "FAIL", result.errorMessage(),
+                    details(inputs, result.outputs()), durationMs(t0), clock.now()));
+            return result.errorMessage() == null ? "connector failed" : result.errorMessage();
+        }
+
+        variables.putAll(token.instanceId(), result.outputs());
+        execLog.log(new LogEntry(
+                token.instanceId(), token.id(), token.currentNodeId(), "serviceTask", connectorId,
+                "CONNECTOR_END", "OK", null,
+                details(inputs, result.outputs()), durationMs(t0), clock.now()));
+        return null;
+    }
+
+    public void enqueueServiceTask(TokenRecord token, String businessKey, String connectorId, Map<String, Object> inputs) {
         try {
             String payload = json.writeValueAsString(Map.of(
                     "connectorId", connectorId,
@@ -596,8 +814,34 @@ public final class ExecutionEngine {
         }
     }
 
+    /**
+     * Persists a PENDING {@code TIMER} job for {@code runAt} (plan 32 Phase 2). Deliberately does NOT call
+     * {@link JobQueuePort#enqueue} — unlike {@link #enqueueServiceTask} (meant to run immediately), a timer
+     * job's whole point is to wait until {@code runAt}; nothing in this codebase yet polls {@code job} rows
+     * for due work (no {@code @Scheduled} poller exists — see plan 28 §8), so today a TIMER job only fires
+     * when something explicitly calls {@code TimerJobHandler.handle}/{@link #resumeEventSubscription} (a
+     * future poller is the natural way to make this automatic in production).
+     */
+    public String enqueueTimerJob(TokenRecord token, String businessKey, String nodeId, String subscriptionId, Instant runAt) {
+        try {
+            String payload = json.writeValueAsString(Map.of(
+                    "tokenId", token.id(),
+                    "instanceId", token.instanceId(),
+                    "businessKey", businessKey == null ? "" : businessKey,
+                    "nodeId", nodeId == null ? "" : nodeId,
+                    "subscriptionId", subscriptionId
+            ));
+            String jobId = UUID.randomUUID().toString();
+            jobs.save(new JobRecord(
+                    jobId, token.instanceId(), token.id(), "TIMER", payload, JobStatus.PENDING, 0, runAt));
+            return jobId;
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot enqueue timer job", e);
+        }
+    }
+
     /** Fires AFTER-phase listeners then closes the node's execution_token_state row as COMPLETED. */
-    private void completeNodeState(
+    public void completeNodeState(
             String stateId, FlowNode node, Map<String, Object> vars, String instanceId, String nodeId, Instant enteredAt
     ) {
         fireListeners(node, stateId, "AFTER", vars, instanceId, nodeId);
@@ -609,7 +853,7 @@ public final class ExecutionEngine {
      * A listener failure is not swallowed — it propagates so the caller marks the node FAILED
      * (plan 23: listeners are business-critical, e.g. audit writes).
      */
-    private void fireListeners(
+    public void fireListeners(
             FlowNode node, String stateId, String phase, Map<String, Object> vars, String instanceId, String nodeId
     ) {
         String camundaEvent = "BEFORE".equals(phase) ? "start" : "end";
@@ -685,7 +929,7 @@ public final class ExecutionEngine {
         };
     }
 
-    private void logGateway(
+    public void logGateway(
             TokenRecord token,
             ExclusiveGatewayNode gateway,
             SequenceFlow chosen,
@@ -709,7 +953,7 @@ public final class ExecutionEngine {
                 "GATEWAY", "OK", label, details, null, clock.now()));
     }
 
-    private void markFailed(TokenRecord token, String message) {
+    public void markFailed(TokenRecord token, String message) {
         tokens.save(new TokenRecord(token.id(), token.instanceId(), token.currentNodeId(), TokenStatus.FAILED, null));
         instances.save(withStatus(token.instanceId(), InstanceStatus.FAILED));
     }
@@ -739,26 +983,98 @@ public final class ExecutionEngine {
                 "INSTANCE_END", status, message, null, null, clock.now());
     }
 
-    private InstanceRecord withStatus(String id, InstanceStatus status) {
+    public InstanceRecord withStatus(String id, InstanceStatus status) {
         InstanceRecord old = instances.findInstanceById(id).orElseThrow();
         return new InstanceRecord(
                 old.id(), old.definitionId(), old.businessKey(), status, old.createdAt(),
                 status == InstanceStatus.COMPLETED || status == InstanceStatus.FAILED ? clock.now() : old.endedAt(),
-                old.createdBy());
+                old.createdBy(), old.parentInstanceId(), old.rootInstanceId());
     }
 
-    private void close(TokenRecord token) {
+    public void close(TokenRecord token) {
         tokens.save(new TokenRecord(token.id(), token.instanceId(), token.currentNodeId(), TokenStatus.COMPLETED, null));
         maybeCompleteInstance(token.instanceId());
     }
 
-    private void maybeCompleteInstance(String instanceId) {
+    /**
+     * Completes the instance once every token is done, then — plan 34 Phase 1 — if this instance was
+     * spawned by a callActivity, wakes the parent's WAITING token so the parent process can advance.
+     */
+    public void maybeCompleteInstance(String instanceId) {
+        // CANCELED counts as done — interrupting boundary events and terminateEndEvent leave sibling
+        // tokens canceled while one branch reaches end; without this the instance never completes.
         boolean allDone = tokens.findByInstanceId(instanceId).stream()
-                .allMatch(t -> t.status() == TokenStatus.COMPLETED || t.status() == TokenStatus.FAILED);
+                .allMatch(t -> t.status() == TokenStatus.COMPLETED
+                        || t.status() == TokenStatus.FAILED
+                        || t.status() == TokenStatus.CANCELED);
         if (allDone) {
-            instances.save(withStatus(instanceId, InstanceStatus.COMPLETED));
+            InstanceRecord completed = withStatus(instanceId, InstanceStatus.COMPLETED);
+            instances.save(completed);
             execLog.log(instanceEnd(instanceId, "OK", null));
+            if (completed.parentInstanceId() != null) {
+                resumeParentAfterCallActivity(completed.parentInstanceId(), instanceId);
+            }
         }
+    }
+
+    /**
+     * Wakes a parent instance's callActivity token after its child ({@code childInstanceId}) has finished
+     * running (plan 34 Phase 1). No-op if the parent has no token WAITING at a {@code callActivity} node —
+     * covers the synchronous case where {@code CallActivityBehavior} itself already advances the parent
+     * (the parent token is still ACTIVE, not WAITING, at that point) and the case where this is called
+     * more than once for the same child (idempotent).
+     */
+    public void resumeParentAfterCallActivity(String parentInstanceId, String childInstanceId) {
+        InstanceRecord parent = instances.findInstanceById(parentInstanceId).orElse(null);
+        if (parent == null) {
+            return;
+        }
+        ProcessDefinition parentDef = definitionLookup.findDefinitionById(parent.definitionId()).orElse(null);
+        if (parentDef == null) {
+            return;
+        }
+        TokenRecord waiting = tokens.findByInstanceId(parentInstanceId).stream()
+                .filter(t -> t.status() == TokenStatus.WAITING)
+                .filter(t -> parentDef.node(t.currentNodeId())
+                        .filter(CallActivityNode.class::isInstance)
+                        .isPresent())
+                .findFirst()
+                .orElse(null);
+        if (waiting == null) {
+            return;
+        }
+
+        variables.putAll(parentInstanceId, variables.getAll(childInstanceId));
+        continueAfterCallActivity(parentDef, waiting, parent.businessKey());
+    }
+
+    /** Completes the callActivity node's token_state and advances the parent's token — mirrors {@link #continueAfterUserTask}. */
+    private void continueAfterCallActivity(ProcessDefinition definition, TokenRecord waitingToken, String businessKey) {
+        FlowNode node = definition.node(waitingToken.currentNodeId()).orElseThrow();
+        Map<String, Object> vars = variables.getAll(waitingToken.instanceId());
+        tokenState.activeStateId(waitingToken.id(), node.id()).ifPresent(stateId -> {
+            try {
+                fireListeners(node, stateId, "AFTER", vars, waitingToken.instanceId(), node.id());
+                tokenState.exit(stateId, "COMPLETED", clock.now(), null, null);
+            } catch (RuntimeException e) {
+                tokenState.exit(stateId, "FAILED", clock.now(), null, e.getMessage());
+                throw e;
+            }
+        });
+
+        List<SequenceFlow> outgoing = definition.outgoing(node.id());
+        if (outgoing.isEmpty()) {
+            close(new TokenRecord(
+                    waitingToken.id(), waitingToken.instanceId(), waitingToken.currentNodeId(),
+                    TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId()));
+            return;
+        }
+        TokenRecord next = new TokenRecord(
+                waitingToken.id(), waitingToken.instanceId(),
+                outgoing.getFirst().targetRef(), TokenStatus.ACTIVE, waitingToken.parentMultiInstanceId());
+        tokens.save(next);
+        instances.save(withStatus(waitingToken.instanceId(), InstanceStatus.RUNNING));
+        run(definition, next, businessKey);
     }
 
     private int durationMs(Instant t0) {

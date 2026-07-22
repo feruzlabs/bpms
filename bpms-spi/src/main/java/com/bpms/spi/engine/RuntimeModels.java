@@ -43,9 +43,21 @@ public final class RuntimeModels {
             InstanceStatus status,
             Instant createdAt,
             Instant endedAt,
-            String createdBy
+            String createdBy,
+            /** Plan 34 Phase 1: set when this instance was spawned by a callActivity — its parent's instance id. */
+            String parentInstanceId,
+            /** The top-of-chain ancestor instance id (== id when this instance has no parent). */
+            String rootInstanceId
     ) {
-        /** Backward-compatible ctor without createdBy. */
+        /** Backward-compatible ctor without parent/root (non-call-activity instances). */
+        public InstanceRecord(
+                String id, String definitionId, String businessKey,
+                InstanceStatus status, Instant createdAt, Instant endedAt, String createdBy
+        ) {
+            this(id, definitionId, businessKey, status, createdAt, endedAt, createdBy, null, null);
+        }
+
+        /** Backward-compatible ctor without createdBy/parent/root. */
         public InstanceRecord(
                 String id, String definitionId, String businessKey,
                 InstanceStatus status, Instant createdAt, Instant endedAt
@@ -99,5 +111,25 @@ public final class RuntimeModels {
             JobStatus status,
             int attempts,
             Instant runAt
+    ) {}
+
+    /**
+     * A pending TIMER/MESSAGE/SIGNAL wait registered against {@code event_subscription} (plan 32 Phases 2/3).
+     * {@code tokenId} is the token waiting for this event — for a plain intermediate catch/receiveTask that
+     * token is parked AT {@code nodeId}; for a boundary event it is still parked at the attached activity and
+     * {@code nodeId} holds the activity id (so {@link com.bpms.spi.port.EventSubscriptionPort#deleteByInstanceAndNode}
+     * can clear every boundary subscription for that activity in one call) — the boundary event's OWN node id
+     * and interrupting flag are then carried in {@code configJson} (see {@code BoundarySupport}).
+     */
+    public record EventSubscriptionRecord(
+            String id,
+            String instanceId,
+            String tokenId,
+            /** TIMER | MESSAGE | SIGNAL */
+            String type,
+            String eventName,
+            String nodeId,
+            String configJson,
+            Instant createdAt
     ) {}
 }

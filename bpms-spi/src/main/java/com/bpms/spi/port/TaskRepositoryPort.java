@@ -26,4 +26,13 @@ public interface TaskRepositoryPort {
     default void completeOpenTasks(String instanceId, java.time.Instant at) {
         // optional — JPA adapter overrides
     }
+
+    /**
+     * Marks the single open user task tied to {@code tokenId} completed — used when an interrupting
+     * boundary event fires while the activity token is parked at a {@code userTask} (plan 32 Phase 3).
+     * Narrower than {@link #completeOpenTasks} (which closes every open task in the whole instance).
+     */
+    default void completeOpenTaskForToken(String tokenId, java.time.Instant at) {
+        // optional — JPA adapter overrides; default no-op is safe when the activity wasn't a userTask.
+    }
 }

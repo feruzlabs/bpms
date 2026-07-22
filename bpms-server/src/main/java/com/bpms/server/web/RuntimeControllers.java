@@ -163,6 +163,24 @@ class TaskController {
     record ClaimRequest(String assignee) {}
 }
 
+@RestController
+@RequestMapping("/api/v1/messages")
+class MessageCorrelationController {
+    private final com.bpms.server.service.MessageCorrelationService correlation;
+
+    MessageCorrelationController(com.bpms.server.service.MessageCorrelationService correlation) {
+        this.correlation = correlation;
+    }
+
+    @PostMapping("/correlate")
+    ResponseEntity<Map<String, Object>> correlate(@RequestBody CorrelateRequest request) {
+        int resumed = correlation.correlate(request.messageName(), request.variables());
+        return ResponseEntity.ok(Map.of("resumed", resumed));
+    }
+
+    record CorrelateRequest(String messageName, Map<String, Object> variables) {}
+}
+
 @RestControllerAdvice
 class RuntimeErrorHandler {
     @ExceptionHandler(NoSuchElementException.class)

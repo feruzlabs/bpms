@@ -22,7 +22,7 @@ import java.time.Instant;
 @Transactional
 public class JpaPersistenceAdapter implements DefinitionRepositoryPort, InstanceRepositoryPort,
         TokenRepositoryPort, VariableStorePort, TaskRepositoryPort, JobRepositoryPort,
-        TokenStatePort, ListenerLogPort, InstanceControlPort, IncidentPort {
+        TokenStatePort, ListenerLogPort, InstanceControlPort, IncidentPort, EventSubscriptionPort {
 
     /** Seed tenant from 004-seed-demo-tenant — used until request-scoped multi-tenancy lands. */
     static final String DEFAULT_TENANT_ID = "t-demo";
@@ -99,28 +99,32 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
         TenantDeployment td = tenantDeploymentForDefinition(i.definitionId());
         jdbc.update("""
                 insert into process_instance(
-                  id,tenant_id,definition_id,deployment_id,business_key,status,created_at,ended_at,created_by)
-                values(?,?,?,?,?,?,?,?,?)
+                  id,tenant_id,definition_id,deployment_id,business_key,status,created_at,ended_at,created_by,
+                  parent_instance_id,root_instance_id)
+                values(?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(id) do update set status=excluded.status, ended_at=excluded.ended_at,
-                  created_by=coalesce(excluded.created_by, process_instance.created_by)
+                  created_by=coalesce(excluded.created_by, process_instance.created_by),
+                  parent_instance_id=coalesce(excluded.parent_instance_id, process_instance.parent_instance_id),
+                  root_instance_id=coalesce(excluded.root_instance_id, process_instance.root_instance_id)
                 """,
                 i.id(), td.tenantId(), i.definitionId(), td.deploymentId(), i.businessKey(), i.status().name(),
                 Timestamp.from(i.createdAt()),
                 i.endedAt() == null ? null : Timestamp.from(i.endedAt()),
-                i.createdBy());
+                i.createdBy(), i.parentInstanceId(), i.rootInstanceId());
         return i;
     }
 
     @Override
     public Optional<InstanceRecord> findInstanceById(String id) {
         return jdbc.query("""
-                select id,definition_id,business_key,status,created_at,ended_at,created_by
+                select id,definition_id,business_key,status,created_at,ended_at,created_by,
+                       parent_instance_id,root_instance_id
                 from process_instance where id=?
                 """, (r, n) -> new InstanceRecord(
                 r.getString(1), r.getString(2), r.getString(3), InstanceStatus.valueOf(r.getString(4)),
                 r.getTimestamp(5).toInstant(),
                 r.getTimestamp(6) == null ? null : r.getTimestamp(6).toInstant(),
-                r.getString(7)), id)
+                r.getString(7), r.getString(8), r.getString(9)), id)
                 .stream().findFirst();
     }
 
@@ -284,6 +288,14 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
                 update user_task set completed=true, completed_at=?
                  where instance_id=? and completed=false
                 """, Timestamp.from(at), instanceId);
+    }
+
+    @Override
+    public void completeOpenTaskForToken(String tokenId, Instant at) {
+        jdbc.update("""
+                update user_task set completed=true, completed_at=?
+                 where token_id=? and completed=false
+                """, Timestamp.from(at), tokenId);
     }
 
     private static void setPgTextArray(java.sql.PreparedStatement ps, int index, java.sql.Connection con, List<String> values)
@@ -681,5 +693,72 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
                 id, instanceId, tokenId, tokenStateId, type,
                 severity == null ? "ERROR" : severity, message, instanceId);
         return id;
+    }
+
+    // ---------------------------------------------------------------------
+    // EventSubscriptionPort (plan 32 Phase 2) — TIMER/MESSAGE/SIGNAL waits
+    // ---------------------------------------------------------------------
+
+    @Override
+    public EventSubscriptionRecord save(EventSubscriptionRecord sub) {
+        String tenantId = tenantForInstance(sub.instanceId());
+        jdbc.update("""
+                insert into event_subscription(
+                  id, tenant_id, instance_id, token_id, type, event_name, node_id, configuration, created_at)
+                values(?,?,?,?,?,?,?,cast(? as jsonb),?)
+                on conflict(id) do update set
+                  event_name=excluded.event_name, node_id=excluded.node_id, configuration=excluded.configuration
+                """,
+                sub.id(), tenantId, sub.instanceId(), sub.tokenId(), sub.type(), sub.eventName(), sub.nodeId(),
+                sub.configJson(), Timestamp.from(sub.createdAt()));
+        return sub;
+    }
+
+    @Override
+    public void deleteById(String id) {
+        jdbc.update("delete from event_subscription where id=?", id);
+    }
+
+    @Override
+    public void deleteByInstanceId(String instanceId) {
+        jdbc.update("delete from event_subscription where instance_id=?", instanceId);
+    }
+
+    @Override
+    public void deleteByInstanceAndNode(String instanceId, String nodeId) {
+        jdbc.update("delete from event_subscription where instance_id=? and node_id=?", instanceId, nodeId);
+    }
+
+    @Override
+    public Optional<EventSubscriptionRecord> findById(String id) {
+        return jdbc.query("""
+                select id,instance_id,token_id,type,event_name,node_id,configuration::text,created_at
+                from event_subscription where id=?
+                """, (r, n) -> mapEventSubscription(r), id)
+                .stream().findFirst();
+    }
+
+    @Override
+    public List<EventSubscriptionRecord> findSubscriptionsByInstanceId(String instanceId) {
+        return jdbc.query("""
+                select id,instance_id,token_id,type,event_name,node_id,configuration::text,created_at
+                from event_subscription where instance_id=?
+                """, (r, n) -> mapEventSubscription(r), instanceId);
+    }
+
+    @Override
+    public List<EventSubscriptionRecord> findOpenByTypeAndName(String type, String eventName) {
+        return jdbc.query("""
+                select es.id,es.instance_id,es.token_id,es.type,es.event_name,es.node_id,es.configuration::text,es.created_at
+                from event_subscription es
+                join process_instance pi on pi.id = es.instance_id
+                where es.type=? and es.event_name=? and pi.status in ('RUNNING','WAITING')
+                """, (r, n) -> mapEventSubscription(r), type, eventName);
+    }
+
+    private static EventSubscriptionRecord mapEventSubscription(java.sql.ResultSet r) throws java.sql.SQLException {
+        return new EventSubscriptionRecord(
+                r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5),
+                r.getString(6), r.getString(7), r.getTimestamp(8).toInstant());
     }
 }

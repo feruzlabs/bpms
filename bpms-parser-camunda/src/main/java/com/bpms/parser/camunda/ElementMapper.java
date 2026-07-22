@@ -5,6 +5,7 @@ import com.bpms.core.definition.BusinessRuleTaskNode;
 import com.bpms.core.definition.CallActivityNode;
 import com.bpms.core.definition.ConditionExpr;
 import com.bpms.core.definition.EndEventNode;
+import com.bpms.core.definition.ErrorEventDef;
 import com.bpms.core.definition.ExclusiveGatewayNode;
 import com.bpms.core.definition.InclusiveGatewayNode;
 import com.bpms.core.definition.IntermediateCatchEventNode;
@@ -18,6 +19,7 @@ import com.bpms.core.definition.ReceiveTaskNode;
 import com.bpms.core.definition.ScriptTaskNode;
 import com.bpms.core.definition.SendTaskNode;
 import com.bpms.core.definition.ServiceTaskNode;
+import com.bpms.core.definition.SignalEventDef;
 import com.bpms.core.definition.StartEventNode;
 import com.bpms.core.definition.SubProcessNode;
 import com.bpms.core.definition.TaskNode;
@@ -29,6 +31,7 @@ import org.camunda.bpm.model.bpmn.instance.BoundaryEvent;
 import org.camunda.bpm.model.bpmn.instance.BusinessRuleTask;
 import org.camunda.bpm.model.bpmn.instance.CallActivity;
 import org.camunda.bpm.model.bpmn.instance.EndEvent;
+import org.camunda.bpm.model.bpmn.instance.ErrorEventDefinition;
 import org.camunda.bpm.model.bpmn.instance.Event;
 import org.camunda.bpm.model.bpmn.instance.ExclusiveGateway;
 import org.camunda.bpm.model.bpmn.instance.FlowElement;
@@ -43,6 +46,7 @@ import org.camunda.bpm.model.bpmn.instance.ReceiveTask;
 import org.camunda.bpm.model.bpmn.instance.ScriptTask;
 import org.camunda.bpm.model.bpmn.instance.SendTask;
 import org.camunda.bpm.model.bpmn.instance.ServiceTask;
+import org.camunda.bpm.model.bpmn.instance.SignalEventDefinition;
 import org.camunda.bpm.model.bpmn.instance.StartEvent;
 import org.camunda.bpm.model.bpmn.instance.SubProcess;
 import org.camunda.bpm.model.bpmn.instance.Task;
@@ -300,6 +304,20 @@ final class ElementMapper {
         Collection<TerminateEventDefinition> terminates = event.getChildElementsByType(TerminateEventDefinition.class);
         if (!terminates.isEmpty()) {
             return Optional.of(new TerminateEventDef());
+        }
+        Collection<ErrorEventDefinition> errors = event.getChildElementsByType(ErrorEventDefinition.class);
+        if (!errors.isEmpty()) {
+            ErrorEventDefinition errorDef = errors.iterator().next();
+            String ref = errorDef.getError() != null ? errorDef.getError().getId() : null;
+            String code = errorDef.getError() != null ? errorDef.getError().getErrorCode() : null;
+            return Optional.of(new ErrorEventDef(ref, code));
+        }
+        Collection<SignalEventDefinition> signals = event.getChildElementsByType(SignalEventDefinition.class);
+        if (!signals.isEmpty()) {
+            SignalEventDefinition signalDef = signals.iterator().next();
+            String ref = signalDef.getSignal() != null ? signalDef.getSignal().getId() : null;
+            String name = signalDef.getSignal() != null ? signalDef.getSignal().getName() : null;
+            return Optional.of(new SignalEventDef(ref, name));
         }
         Collection<org.camunda.bpm.model.bpmn.instance.EventDefinition> other =
                 event.getChildElementsByType(org.camunda.bpm.model.bpmn.instance.EventDefinition.class);
