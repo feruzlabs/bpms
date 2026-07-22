@@ -54,7 +54,8 @@ public final class CallActivityBehavior implements NodeBehavior<CallActivityNode
         String childInstanceId = UUID.randomUUID().toString();
         ctx.instances().save(new InstanceRecord(
                 childInstanceId, childDefId, parent.businessKey(), InstanceStatus.RUNNING,
-                ctx.clock().now(), null, parent.createdBy(), parentInstanceId, rootId));
+                ctx.clock().now(), null, parent.createdBy(), parentInstanceId, rootId,
+                childDef.processId(), null));
         ctx.variables().putAll(childInstanceId, ctx.vars());
 
         StartEventNode childStart = childDef.nodes().stream()

@@ -16,10 +16,16 @@ import java.util.*;
 class DeployController {
     private final ProcessEnginePort engine;
     private final DefinitionRepositoryPort definitions;
+    private final com.bpms.server.service.ProcessEngineService engineService;
 
-    DeployController(ProcessEnginePort engine, DefinitionRepositoryPort definitions) {
+    DeployController(
+            ProcessEnginePort engine,
+            DefinitionRepositoryPort definitions,
+            com.bpms.server.service.ProcessEngineService engineService
+    ) {
         this.engine = engine;
         this.definitions = definitions;
+        this.engineService = engineService;
     }
 
     @PostMapping(consumes = {MediaType.APPLICATION_XML_VALUE, MediaType.TEXT_XML_VALUE})
@@ -28,7 +34,10 @@ class DeployController {
     }
 
     @GetMapping
-    List<DefinitionRecord> list() {
+    Object list(@RequestParam(required = false) String key) {
+        if (key != null && !key.isBlank()) {
+            return engineService.listDefinitions(key);
+        }
         return definitions.findAll();
     }
 

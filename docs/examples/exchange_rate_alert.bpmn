@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  id="Definitions_exchange_rate_alert"
+                  targetNamespace="https://bpms.new/examples">
+  <!--
+    Plan 34 — public API end-to-end demo (start-form + http-json-get + exclusive gateway).
+    Requires outbound internet to open.er-api.com when run against a live engine.
+  -->
+  <bpmn:process id="exchange_rate_alert" name="Exchange rate alert" isExecutable="true">
+    <bpmn:startEvent id="start" name="Start" camunda:formKey="exchange_rate_form">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="base" label="Base currency" type="string" defaultValue="USD"/>
+          <camunda:formField id="target" label="Target currency" type="string" defaultValue="UZS"/>
+          <camunda:formField id="threshold" label="Alert threshold" type="long" defaultValue="12000"/>
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>f_start_fetch</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="fetchRate" name="Fetch exchange rate">
+      <bpmn:extensionElements>
+        <camunda:connector>
+          <camunda:connectorId>http-json-get</camunda:connectorId>
+          <camunda:inputOutput>
+            <camunda:inputParameter name="url">https://open.er-api.com/v6/latest/${base}</camunda:inputParameter>
+            <camunda:inputParameter name="resultPath">rates.${target}</camunda:inputParameter>
+            <camunda:inputParameter name="threshold">${threshold}</camunda:inputParameter>
+          </camunda:inputOutput>
+        </camunda:connector>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f_start_fetch</bpmn:incoming>
+      <bpmn:outgoing>f_fetch_gw</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="gw" name="Above threshold?" default="f_ok">
+      <bpmn:incoming>f_fetch_gw</bpmn:incoming>
+      <bpmn:outgoing>f_alert</bpmn:outgoing>
+      <bpmn:outgoing>f_ok</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndAlert" name="ALERT: above threshold">
+      <bpmn:incoming>f_alert</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="EndOk" name="OK: below threshold">
+      <bpmn:incoming>f_ok</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="f_start_fetch" sourceRef="start" targetRef="fetchRate"/>
+    <bpmn:sequenceFlow id="f_fetch_gw" sourceRef="fetchRate" targetRef="gw"/>
+    <bpmn:sequenceFlow id="f_alert" name="above" sourceRef="gw" targetRef="EndAlert">
+      <bpmn:conditionExpression>$aboveThreshold == true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f_ok" name="below/default" sourceRef="gw" targetRef="EndOk"/>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="exchange_rate_alert">
+      <bpmndi:BPMNShape id="Shape_start" bpmnElement="start">
+        <dc:Bounds x="152" y="102" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_fetch" bpmnElement="fetchRate">
+        <dc:Bounds x="240" y="80" width="120" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_gw" bpmnElement="gw" isMarkerVisible="true">
+        <dc:Bounds x="415" y="95" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_alert" bpmnElement="EndAlert">
+        <dc:Bounds x="522" y="42" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_ok" bpmnElement="EndOk">
+        <dc:Bounds x="522" y="162" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_start_fetch" bpmnElement="f_start_fetch">
+        <di:waypoint x="188" y="120"/>
+        <di:waypoint x="240" y="120"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_fetch_gw" bpmnElement="f_fetch_gw">
+        <di:waypoint x="360" y="120"/>
+        <di:waypoint x="415" y="120"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_alert" bpmnElement="f_alert">
+        <di:waypoint x="440" y="95"/>
+        <di:waypoint x="440" y="60"/>
+        <di:waypoint x="522" y="60"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_ok" bpmnElement="f_ok">
+        <di:waypoint x="440" y="145"/>
+        <di:waypoint x="440" y="180"/>
+        <di:waypoint x="522" y="180"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

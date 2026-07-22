@@ -5,6 +5,7 @@ import com.bpms.core.definition.ConnectorImplementation;
 import com.bpms.core.definition.IoParameter;
 import com.bpms.core.definition.SequenceFlow;
 import com.bpms.core.definition.ServiceTaskNode;
+import com.bpms.expression.TemplateExpressions;
 
 import java.util.HashMap;
 import java.util.List;
@@ -36,7 +37,8 @@ public final class ServiceTaskBehavior implements NodeBehavior<ServiceTaskNode> 
         if (service.implementation() instanceof ConnectorImplementation ci) {
             Map<String, Object> inputs = new HashMap<>();
             for (IoParameter p : ci.binding().inputs()) {
-                inputs.put(p.name(), ctx.expressions().evaluate(p.value(), ctx.vars()));
+                // ${var} templates (URLs, resultPath) must not go through SpEL — see TemplateExpressions.
+                inputs.put(p.name(), TemplateExpressions.resolve(p.value(), ctx.expressions(), ctx.vars()));
             }
             if (ctx.asyncServiceTasks()) {
                 // Boundary subscriptions stay open until ExecutionEngine.continueAfterServiceTask clears

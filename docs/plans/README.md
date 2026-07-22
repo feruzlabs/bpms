@@ -39,10 +39,12 @@
 | 29 | `29-dod-gap-close.md` | 22/25/27 DoD bo'shliqlarini yopish (test + node-revisit guard verify + README) | 📝 kutilmoqda |
 | 30 | `30-start-form-validation-business-key.md` | Start-forma validatsiyasi + business key (21 §2.1); 10/10 korpus sxema ishlatadi | 📝 kutilmoqda |
 | 31 | `31-human-workflow-usertask-manualtask.md` | Human-workflow: userTask/manualTask/terminateEnd/initiator (HR approval, regional_vacation) | 📝 kutilmoqda |
-| 32 | `32-remaining-bpmn-elements.md` | Qolgan 7 element: boundary/intermediateThrow/callActivity/subProcess/receive/sendTask/businessRuleTask | ✅ done (DMN deferred) |
-| 33 | `33-refactor-god-classes.md` | God-class refactor: ExecutionEngine (793)→NodeBehavior, JpaPersistenceAdapter (685)→port bo'yicha | 🔧 engine NodeBehavior ✅; JPA split kutilmoqda |
+| 32 | `32-remaining-bpmn-elements.md` | Qolgan 7 element: boundary/intermediateThrow/callActivity/subProcess/receive/sendTask/businessRuleTask | 📝 kutilmoqda |
+| 33 | `33-refactor-god-classes.md` | God-class refactor: ExecutionEngine (793)→NodeBehavior, JpaPersistenceAdapter (685)→port bo'yicha | 📝 kutilmoqda |
 | 34 | `34-public-api-test-process.md` | Public API test protsesi (http-json-get connector + valyuta kursi bpmn) — engine end-to-end sinovi | 📝 kutilmoqda |
+| 35 | `35-process-versioning.md` | Protses versiyalash: checksum bilan "yangi versiyami" aniqlash + versiya qayerda kerak | ✅ done |
 
+> **Kontekst:** `docs/context/PROGRESS-2026-07-22.md` — 2026-07-22 sessiyasi natijalari (rejalar 22–35, topilmalar).
 > **ADR:** `docs/adr/ADR-001-execution-listeners-vs-service-tasks.md` — skript-listener + `bpms.*` vs service-task (qaror).
 > **Namuna:** `docs/examples/regional_vacation_bestpractice.bpmn` — HR protsesning best-practice refactor cloni.
 

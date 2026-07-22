@@ -43,6 +43,9 @@ bpms:
   job-queue: ${BPMS_JOB_QUEUE:in-process}
   execution-log:
     enabled: ${BPMS_EXEC_LOG:true}
+  versioning:
+    # When true, redeploying identical BPMN (same canonical SHA-256) reuses the latest version (plan 35).
+    dedup-identical: ${BPMS_VERSIONING_DEDUP:true}
 
 bi:
   endpoint: ${BI_ENDPOINT:}

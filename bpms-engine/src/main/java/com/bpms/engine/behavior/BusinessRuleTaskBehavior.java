@@ -5,6 +5,7 @@ import com.bpms.core.definition.BusinessRuleTaskNode;
 import com.bpms.core.definition.ConnectorImplementation;
 import com.bpms.core.definition.IoParameter;
 import com.bpms.core.definition.SequenceFlow;
+import com.bpms.expression.TemplateExpressions;
 import com.bpms.spi.port.ExecutionLogPort.LogEntry;
 
 import java.util.HashMap;
@@ -31,7 +32,7 @@ public final class BusinessRuleTaskBehavior implements NodeBehavior<BusinessRule
         if (task.implementation() instanceof ConnectorImplementation ci) {
             Map<String, Object> inputs = new HashMap<>();
             for (IoParameter p : ci.binding().inputs()) {
-                inputs.put(p.name(), ctx.expressions().evaluate(p.value(), ctx.vars()));
+                inputs.put(p.name(), TemplateExpressions.resolve(p.value(), ctx.expressions(), ctx.vars()));
             }
             if (ctx.asyncServiceTasks()) {
                 ctx.enqueueServiceTask(ci.binding().connectorId(), inputs);

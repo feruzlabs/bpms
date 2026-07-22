@@ -9,6 +9,7 @@ import com.bpms.core.definition.UserTaskNode;
 import com.bpms.engine.ExecutionEngine;
 import com.bpms.spi.engine.ProcessEnginePort;
 import com.bpms.spi.engine.RuntimeModels.DefinitionRecord;
+import com.bpms.spi.engine.RuntimeModels.DefinitionVersionView;
 import com.bpms.spi.engine.RuntimeModels.DeployResult;
 import com.bpms.spi.engine.RuntimeModels.InstanceRecord;
 import com.bpms.spi.engine.RuntimeModels.InstanceStatus;
@@ -32,6 +33,7 @@ import com.bpms.spi.port.TaskRepositoryPort;
 import com.bpms.spi.port.TokenRepositoryPort;
 import com.bpms.spi.port.VariableStorePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +57,7 @@ public class ProcessEngineService implements ProcessEnginePort {
     private final ClockPort clock;
     private final ExecutionLogPort execLog;
     private final ObjectMapper json;
+    private final boolean dedupIdentical;
 
     public ProcessEngineService(
             ProcessDefinitionParser parser,
@@ -69,7 +72,8 @@ public class ProcessEngineService implements ProcessEnginePort {
             ExecutionEngine engine,
             ClockPort clock,
             ExecutionLogPort execLog,
-            ObjectMapper json
+            ObjectMapper json,
+            @Value("${bpms.versioning.dedup-identical:true}") boolean dedupIdentical
     ) {
         this.parser = parser;
         this.registry = registry;
@@ -84,6 +88,7 @@ public class ProcessEngineService implements ProcessEnginePort {
         this.clock = clock;
         this.execLog = execLog;
         this.json = json;
+        this.dedupIdentical = dedupIdentical;
     }
 
     @Override
@@ -93,13 +98,37 @@ public class ProcessEngineService implements ProcessEnginePort {
             throw new DeploymentWarningsException(parsed.warnings());
         }
         ProcessDefinition d = parsed.definition();
+        String checksum = BpmnChecksum.sha256Canonical(bytes);
+        String xml = new String(bytes, StandardCharsets.UTF_8);
+
+        Optional<DefinitionRecord> latest = definitions.findLatestByKey(d.processId());
+        if (dedupIdentical && latest.isPresent()
+                && checksum != null && checksum.equals(latest.get().checksum())) {
+            DefinitionRecord existing = latest.get();
+            registry.warm(existing.id(), d);
+            return new DeployResult(
+                    existing.id(), existing.key(), existing.version(), true, false, checksum);
+        }
+
         String id = UUID.randomUUID().toString();
         int version = definitions.nextVersion(d.processId());
         definitions.save(new DefinitionRecord(
                 id, d.processId(), d.name(), version, "CAMUNDA",
-                new String(bytes, StandardCharsets.UTF_8), clock.now()));
+                xml, clock.now(), checksum, true));
         registry.warm(id, d);
-        return new DeployResult(id, d.processId(), version);
+        return new DeployResult(id, d.processId(), version, true, true, checksum);
+    }
+
+    /** Catalog: all versions for a process key, or every definition when {@code key} is null/blank (plan 35). */
+    public List<DefinitionVersionView> listDefinitions(String key) {
+        if (key != null && !key.isBlank()) {
+            return definitions.findVersionsByKey(key.trim());
+        }
+        return definitions.findAll().stream()
+                .map(d -> new DefinitionVersionView(
+                        d.id(), d.key(), d.name(), d.version(), d.isLatest(), d.checksum(),
+                        d.createdAt(), "ACTIVE", 0L))
+                .toList();
     }
 
     @Override
@@ -109,9 +138,7 @@ public class ProcessEngineService implements ProcessEnginePort {
 
     @Override
     public InstanceView start(String ref, String businessKey, Map<String, Object> input, String startedBy) {
-        DefinitionRecord d = definitions.findDefinitionById(ref)
-                .or(() -> definitions.findLatestByKey(ref))
-                .orElseThrow(() -> new NoSuchElementException("Definition not found: " + ref));
+        DefinitionRecord d = resolveDefinitionRef(ref);
         ProcessDefinition model = registry.get(d.id());
         Map<String, Object> values = new LinkedHashMap<>(StartFormValidator.validateAndCoerce(model, input));
         String bk = resolveBusinessKey(model, values, businessKey);
@@ -130,7 +157,8 @@ public class ProcessEngineService implements ProcessEnginePort {
 
         String iid = UUID.randomUUID().toString();
         instances.save(new InstanceRecord(
-                iid, d.id(), bk, InstanceStatus.RUNNING, clock.now(), null, startedBy));
+                iid, d.id(), bk, InstanceStatus.RUNNING, clock.now(), null, startedBy,
+                null, null, d.key(), d.version()));
         variables.putAll(iid, values);
         Map<String, Object> startDetails = new LinkedHashMap<>();
         startDetails.put("variables", new LinkedHashMap<>(values));
@@ -162,6 +190,35 @@ public class ProcessEngineService implements ProcessEnginePort {
         }
 
         return getInstance(iid);
+    }
+
+    /**
+     * Resolves a start {@code ref}: definition id, process key (→ {@code is_latest}), or {@code key:version}
+     * for an exact version (plan 35).
+     */
+    DefinitionRecord resolveDefinitionRef(String ref) {
+        if (ref == null || ref.isBlank()) {
+            throw new NoSuchElementException("Definition ref is required");
+        }
+        Optional<DefinitionRecord> byId = definitions.findDefinitionById(ref);
+        if (byId.isPresent()) {
+            return byId.get();
+        }
+        int colon = ref.lastIndexOf(':');
+        if (colon > 0 && colon < ref.length() - 1) {
+            String key = ref.substring(0, colon);
+            String verPart = ref.substring(colon + 1);
+            try {
+                int version = Integer.parseInt(verPart);
+                return definitions.findByKeyAndVersion(key, version)
+                        .orElseThrow(() -> new NoSuchElementException(
+                                "Definition not found: " + key + " version " + version));
+            } catch (NumberFormatException ignored) {
+                // process keys rarely contain ':version' — fall through to latest-by-key
+            }
+        }
+        return definitions.findLatestByKey(ref)
+                .orElseThrow(() -> new NoSuchElementException("Definition not found: " + ref));
     }
 
     /**

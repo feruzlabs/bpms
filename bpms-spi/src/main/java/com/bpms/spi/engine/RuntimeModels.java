@@ -13,7 +13,34 @@ public final class RuntimeModels {
 
     public enum JobStatus { PENDING, RUNNING, COMPLETED, FAILED, CANCELED }
 
-    public record DeployResult(String definitionId, String key, int version) {}
+    public record DeployResult(
+            String definitionId,
+            /** Process key ({@code process_definition.process_key}). */
+            String processKey,
+            int version,
+            boolean isLatest,
+            /** {@code false} when identical BPMN was redeployed and the existing version was reused (plan 35). */
+            boolean changed,
+            String checksum
+    ) {
+        /** Alias for {@link #processKey()} — older clients used {@code key}. */
+        public String key() {
+            return processKey;
+        }
+    }
+
+    /** Catalog row for {@code GET /process-definitions?key=…} (plan 35). */
+    public record DefinitionVersionView(
+            String definitionId,
+            String processKey,
+            String name,
+            int version,
+            boolean isLatest,
+            String checksum,
+            Instant deployedAt,
+            String status,
+            long runningInstances
+    ) {}
 
     public record TokenView(String id, String currentNodeId, TokenStatus status) {}
 
@@ -33,8 +60,18 @@ public final class RuntimeModels {
             int version,
             String sourceFormat,
             String bpmnXml,
-            Instant createdAt
-    ) {}
+            Instant createdAt,
+            String checksum,
+            boolean isLatest
+    ) {
+        /** Backward-compatible ctor without checksum / isLatest. */
+        public DefinitionRecord(
+                String id, String key, String name, int version,
+                String sourceFormat, String bpmnXml, Instant createdAt
+        ) {
+            this(id, key, name, version, sourceFormat, bpmnXml, createdAt, null, true);
+        }
+    }
 
     public record InstanceRecord(
             String id,
@@ -47,22 +84,36 @@ public final class RuntimeModels {
             /** Plan 34 Phase 1: set when this instance was spawned by a callActivity — its parent's instance id. */
             String parentInstanceId,
             /** The top-of-chain ancestor instance id (== id when this instance has no parent). */
-            String rootInstanceId
+            String rootInstanceId,
+            /** Plan 35: denorm of {@code process_definition.process_key} for join-free monitoring. */
+            String definitionKey,
+            /** Plan 35: denorm of {@code process_definition.version}. */
+            Integer definitionVersion
     ) {
-        /** Backward-compatible ctor without parent/root (non-call-activity instances). */
+        /** Backward-compatible ctor without parent/root/denorm. */
         public InstanceRecord(
                 String id, String definitionId, String businessKey,
                 InstanceStatus status, Instant createdAt, Instant endedAt, String createdBy
         ) {
-            this(id, definitionId, businessKey, status, createdAt, endedAt, createdBy, null, null);
+            this(id, definitionId, businessKey, status, createdAt, endedAt, createdBy, null, null, null, null);
         }
 
-        /** Backward-compatible ctor without createdBy/parent/root. */
+        /** Backward-compatible ctor without createdBy/parent/root/denorm. */
         public InstanceRecord(
                 String id, String definitionId, String businessKey,
                 InstanceStatus status, Instant createdAt, Instant endedAt
         ) {
             this(id, definitionId, businessKey, status, createdAt, endedAt, null);
+        }
+
+        /** Parent/root without denorm (callActivity path before plan 35 denorm was filled). */
+        public InstanceRecord(
+                String id, String definitionId, String businessKey,
+                InstanceStatus status, Instant createdAt, Instant endedAt, String createdBy,
+                String parentInstanceId, String rootInstanceId
+        ) {
+            this(id, definitionId, businessKey, status, createdAt, endedAt, createdBy,
+                    parentInstanceId, rootInstanceId, null, null);
         }
     }
 

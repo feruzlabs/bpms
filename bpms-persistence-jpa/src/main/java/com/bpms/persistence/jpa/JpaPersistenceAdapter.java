@@ -46,11 +46,12 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
                 """, tenantId, d.key());
         jdbc.update("""
                 insert into process_definition(
-                  id,tenant_id,deployment_id,process_key,name,version,source_format,bpmn_xml,is_latest,status,created_at)
-                values(?,?,?,?,?,?,?,?,true,'ACTIVE',?)
+                  id,tenant_id,deployment_id,process_key,name,version,source_format,bpmn_xml,
+                  bpmn_checksum,is_latest,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,true,'ACTIVE',?)
                 """,
                 d.id(), tenantId, deploymentId, d.key(), d.name(), d.version(), d.sourceFormat(), d.bpmnXml(),
-                Timestamp.from(d.createdAt()));
+                d.checksum(), Timestamp.from(d.createdAt()));
         return d;
     }
 
@@ -61,70 +62,113 @@ public class JpaPersistenceAdapter implements DefinitionRepositoryPort, Instance
 
     @Override
     public Optional<DefinitionRecord> findLatestByKey(String key) {
-        return oneDefinition("where process_key=? order by version desc limit 1", key);
+        return oneDefinition("where process_key=? and is_latest=true limit 1", key)
+                .or(() -> oneDefinition("where process_key=? order by version desc limit 1", key));
+    }
+
+    @Override
+    public Optional<DefinitionRecord> findByKeyAndVersion(String key, int version) {
+        return oneDefinition("where process_key=? and version=?", key, version);
     }
 
     @Override
     public List<DefinitionRecord> findAll() {
         return jdbc.query("""
-                select id,process_key,name,version,source_format,bpmn_xml,created_at
+                select id,process_key,name,version,source_format,bpmn_xml,created_at,bpmn_checksum,is_latest
                 from process_definition order by process_key,version
                 """, (r, n) -> mapDefinition(r));
     }
 
     @Override
+    public List<DefinitionVersionView> findVersionsByKey(String key) {
+        return jdbc.query("""
+                select pd.id, pd.process_key, pd.name, pd.version, pd.is_latest, pd.bpmn_checksum,
+                       pd.created_at, pd.status,
+                       (select count(*) from process_instance pi
+                         where pi.definition_id = pd.id
+                           and pi.status in ('RUNNING','WAITING','SUSPENDED')) as running_instances
+                from process_definition pd
+                where pd.process_key=?
+                order by pd.version
+                """, (r, n) -> new DefinitionVersionView(
+                r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getBoolean(5),
+                r.getString(6), r.getTimestamp(7).toInstant(), r.getString(8), r.getLong(9)), key);
+    }
+
+    @Override
     public int nextVersion(String key) {
         Integer v = jdbc.queryForObject(
-                "select coalesce(max(version),0)+1 from process_definition where process_key=?",
-                Integer.class, key);
+                """
+                select coalesce(max(version),0)+1 from process_definition
+                where tenant_id=? and process_key=?
+                """,
+                Integer.class, DEFAULT_TENANT_ID, key);
         return v == null ? 1 : v;
     }
 
-    private Optional<DefinitionRecord> oneDefinition(String suffix, Object arg) {
+    private Optional<DefinitionRecord> oneDefinition(String suffix, Object... args) {
         return jdbc.query("""
-                select id,process_key,name,version,source_format,bpmn_xml,created_at
+                select id,process_key,name,version,source_format,bpmn_xml,created_at,bpmn_checksum,is_latest
                 from process_definition
-                """ + suffix, (r, n) -> mapDefinition(r), arg)
+                """ + suffix, (r, n) -> mapDefinition(r), args)
                 .stream().findFirst();
     }
 
     private static DefinitionRecord mapDefinition(java.sql.ResultSet r) throws java.sql.SQLException {
         return new DefinitionRecord(
                 r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getString(5),
-                r.getString(6), r.getTimestamp(7).toInstant());
+                r.getString(6), r.getTimestamp(7).toInstant(), r.getString(8), r.getBoolean(9));
     }
 
     @Override
     public InstanceRecord save(InstanceRecord i) {
         TenantDeployment td = tenantDeploymentForDefinition(i.definitionId());
+        String defKey = i.definitionKey();
+        Integer defVer = i.definitionVersion();
+        if (defKey == null || defVer == null) {
+            DefinitionRecord def = findDefinitionById(i.definitionId()).orElse(null);
+            if (def != null) {
+                if (defKey == null) {
+                    defKey = def.key();
+                }
+                if (defVer == null) {
+                    defVer = def.version();
+                }
+            }
+        }
         jdbc.update("""
                 insert into process_instance(
                   id,tenant_id,definition_id,deployment_id,business_key,status,created_at,ended_at,created_by,
-                  parent_instance_id,root_instance_id)
-                values(?,?,?,?,?,?,?,?,?,?,?)
+                  parent_instance_id,root_instance_id,definition_key,definition_version)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(id) do update set status=excluded.status, ended_at=excluded.ended_at,
                   created_by=coalesce(excluded.created_by, process_instance.created_by),
                   parent_instance_id=coalesce(excluded.parent_instance_id, process_instance.parent_instance_id),
-                  root_instance_id=coalesce(excluded.root_instance_id, process_instance.root_instance_id)
+                  root_instance_id=coalesce(excluded.root_instance_id, process_instance.root_instance_id),
+                  definition_key=coalesce(excluded.definition_key, process_instance.definition_key),
+                  definition_version=coalesce(excluded.definition_version, process_instance.definition_version)
                 """,
                 i.id(), td.tenantId(), i.definitionId(), td.deploymentId(), i.businessKey(), i.status().name(),
                 Timestamp.from(i.createdAt()),
                 i.endedAt() == null ? null : Timestamp.from(i.endedAt()),
-                i.createdBy(), i.parentInstanceId(), i.rootInstanceId());
-        return i;
+                i.createdBy(), i.parentInstanceId(), i.rootInstanceId(), defKey, defVer);
+        return new InstanceRecord(
+                i.id(), i.definitionId(), i.businessKey(), i.status(), i.createdAt(), i.endedAt(),
+                i.createdBy(), i.parentInstanceId(), i.rootInstanceId(), defKey, defVer);
     }
 
     @Override
     public Optional<InstanceRecord> findInstanceById(String id) {
         return jdbc.query("""
                 select id,definition_id,business_key,status,created_at,ended_at,created_by,
-                       parent_instance_id,root_instance_id
+                       parent_instance_id,root_instance_id,definition_key,definition_version
                 from process_instance where id=?
                 """, (r, n) -> new InstanceRecord(
                 r.getString(1), r.getString(2), r.getString(3), InstanceStatus.valueOf(r.getString(4)),
                 r.getTimestamp(5).toInstant(),
                 r.getTimestamp(6) == null ? null : r.getTimestamp(6).toInstant(),
-                r.getString(7), r.getString(8), r.getString(9)), id)
+                r.getString(7), r.getString(8), r.getString(9), r.getString(10),
+                r.getObject(11) == null ? null : r.getInt(11)), id)
                 .stream().findFirst();
     }
 

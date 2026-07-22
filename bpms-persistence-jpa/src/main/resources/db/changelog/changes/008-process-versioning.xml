@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Plan 35: checksum-based definition versioning + instance denorm. -->
+    <changeSet id="008-process-versioning" author="bpms">
+        <sql><![CDATA[
+alter table process_definition
+  add column if not exists bpmn_checksum varchar(64);
+
+create index if not exists ix_process_definition_tenant_key_latest
+  on process_definition(tenant_id, process_key) where is_latest = true;
+
+alter table process_instance
+  add column if not exists definition_key varchar(255);
+
+alter table process_instance
+  add column if not exists definition_version integer;
+
+create index if not exists ix_process_instance_definition_key_version
+  on process_instance(definition_key, definition_version);
+
+-- Backfill denorm from process_definition for existing rows.
+update process_instance pi
+set definition_key = pd.process_key,
+    definition_version = pd.version
+from process_definition pd
+where pi.definition_id = pd.id
+  and (pi.definition_key is null or pi.definition_version is null);
+
+create or replace view v_process_versions as
+select
+  pd.tenant_id,
+  pd.process_key,
+  pd.version,
+  pd.is_latest,
+  pd.bpmn_checksum as checksum,
+  pd.status,
+  pd.created_at as deployed_at,
+  pd.id as definition_id,
+  pd.name,
+  (select count(*) from process_instance pi
+    where pi.definition_id = pd.id and pi.status in ('RUNNING','WAITING','SUSPENDED')) as running_instances,
+  (select count(*) from process_instance pi where pi.definition_id = pd.id) as total_instances
+from process_definition pd;
+        ]]></sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -176,12 +176,30 @@ class CachingDefinitionRegistryTest {
 
         @Override
         public Optional<DefinitionRecord> findLatestByKey(String key) {
-            return byId.values().stream().filter(d -> d.key().equals(key)).findFirst();
+            return byId.values().stream().filter(d -> d.key().equals(key) && d.isLatest()).findFirst()
+                    .or(() -> byId.values().stream().filter(d -> d.key().equals(key)).findFirst());
+        }
+
+        @Override
+        public Optional<DefinitionRecord> findByKeyAndVersion(String key, int version) {
+            return byId.values().stream()
+                    .filter(d -> d.key().equals(key) && d.version() == version)
+                    .findFirst();
         }
 
         @Override
         public List<DefinitionRecord> findAll() {
             return List.copyOf(byId.values());
+        }
+
+        @Override
+        public List<com.bpms.spi.engine.RuntimeModels.DefinitionVersionView> findVersionsByKey(String key) {
+            return byId.values().stream()
+                    .filter(d -> d.key().equals(key))
+                    .map(d -> new com.bpms.spi.engine.RuntimeModels.DefinitionVersionView(
+                            d.id(), d.key(), d.name(), d.version(), d.isLatest(), d.checksum(),
+                            d.createdAt(), "ACTIVE", 0L))
+                    .toList();
         }
 
         @Override

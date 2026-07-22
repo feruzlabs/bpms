@@ -476,7 +476,8 @@ public final class ExecutionEngine {
         InstanceRecord old = instances.findInstanceById(instanceId).orElseThrow();
         instances.save(new InstanceRecord(
                 old.id(), old.definitionId(), old.businessKey(), InstanceStatus.COMPLETED,
-                old.createdAt(), clock.now(), old.createdBy(), old.parentInstanceId(), old.rootInstanceId()));
+                old.createdAt(), clock.now(), old.createdBy(), old.parentInstanceId(), old.rootInstanceId(),
+                old.definitionKey(), old.definitionVersion()));
         execLog.log(instanceEnd(instanceId, "OK", "terminateEndEvent"));
     }
 
@@ -988,7 +989,8 @@ public final class ExecutionEngine {
         return new InstanceRecord(
                 old.id(), old.definitionId(), old.businessKey(), status, old.createdAt(),
                 status == InstanceStatus.COMPLETED || status == InstanceStatus.FAILED ? clock.now() : old.endedAt(),
-                old.createdBy(), old.parentInstanceId(), old.rootInstanceId());
+                old.createdBy(), old.parentInstanceId(), old.rootInstanceId(),
+                old.definitionKey(), old.definitionVersion());
     }
 
     public void close(TokenRecord token) {
